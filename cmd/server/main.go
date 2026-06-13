@@ -44,6 +44,9 @@ func main() {
 
 	// 認証が必要なAPIはauth.Middlewareで保護します。
 	mux.Handle("GET /api/me", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.Me)))
+	mux.Handle("GET /api/me/items", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListMyItems)))
+	mux.Handle("GET /api/me/purchases", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListPurchaseHistory)))
+	mux.Handle("GET /api/me/checklist", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListChecklist)))
 	mux.Handle("POST /api/items", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CreateItem)))
 
 	// /api/items/{id} 系の可変パスは、標準ライブラリで分岐します。
@@ -53,6 +56,30 @@ func main() {
 		// 商品購入。
 		if r.Method == http.MethodPost && strings.HasSuffix(path, "/purchase") {
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.PurchaseItem)).ServeHTTP(w, r)
+			return
+		}
+
+		// 出品キャンセル。
+		if r.Method == http.MethodPost && strings.HasSuffix(path, "/cancel") {
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CancelItem)).ServeHTTP(w, r)
+			return
+		}
+
+		// チェックリスト状態取得。
+		if r.Method == http.MethodGet && strings.HasSuffix(path, "/checklist") {
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.GetChecklistStatus)).ServeHTTP(w, r)
+			return
+		}
+
+		// チェックリスト追加。
+		if r.Method == http.MethodPost && strings.HasSuffix(path, "/checklist") {
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.AddChecklist)).ServeHTTP(w, r)
+			return
+		}
+
+		// チェックリスト削除。
+		if r.Method == http.MethodDelete && strings.HasSuffix(path, "/checklist") {
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.RemoveChecklist)).ServeHTTP(w, r)
 			return
 		}
 
@@ -71,6 +98,12 @@ func main() {
 		// DM送信。
 		if r.Method == http.MethodPost && strings.HasSuffix(path, "/messages") {
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CreateMessage)).ServeHTTP(w, r)
+			return
+		}
+
+		// 商品情報編集。
+		if r.Method == http.MethodPut {
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.UpdateItem)).ServeHTTP(w, r)
 			return
 		}
 

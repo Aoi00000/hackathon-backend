@@ -1,2 +1,0 @@
-# hackathon-backend
-hackathon-backend

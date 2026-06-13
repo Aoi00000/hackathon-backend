@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -55,8 +57,16 @@ type generateContentResponse struct {
 
 // GenerateText はプロンプトをGeminiに送り、生成されたテキストを返します。
 func (c *Client) GenerateText(prompt string) (string, error) {
-	if c.APIKey == "" {
-		return "", fmt.Errorf("GEMINI_API_KEY is empty")
+	// APIキーが未設定・ダミー値のままだと、Gemini APIは必ず失敗します。
+	// 画面上で原因を追いやすいよう、外部APIを呼ぶ前に明示的なエラーにします。
+	apiKey := strings.TrimSpace(c.APIKey)
+	if apiKey == "" || apiKey == "dummy" || strings.Contains(apiKey, "your-gemini") {
+		return "", fmt.Errorf("GEMINI_API_KEYが未設定です。Google AI Studioで取得したAPIキーをhackathon-backend/.envに設定し、バックエンドを再起動してください")
+	}
+
+	model := strings.TrimSpace(c.Model)
+	if model == "" {
+		model = "gemini-2.5-flash"
 	}
 
 	reqBody := generateContentRequest{
@@ -74,7 +84,7 @@ func (c *Client) GenerateText(prompt string) (string, error) {
 		return "", err
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", c.Model, c.APIKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -88,12 +98,17 @@ func (c *Client) GenerateText(prompt string) (string, error) {
 	}
 	defer res.Body.Close()
 
+	responseBytes, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", err
+	}
+
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return "", fmt.Errorf("gemini api returned status %d", res.StatusCode)
+		return "", fmt.Errorf("Gemini APIがHTTP %dを返しました。APIキー、利用可能なモデル名、APIの有効化状態を確認してください。レスポンス: %s", res.StatusCode, string(responseBytes))
 	}
 
 	var parsed generateContentResponse
-	if err := json.NewDecoder(res.Body).Decode(&parsed); err != nil {
+	if err := json.Unmarshal(responseBytes, &parsed); err != nil {
 		return "", err
 	}
 
