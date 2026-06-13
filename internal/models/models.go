@@ -4,59 +4,102 @@ import "time"
 
 // User は users テーブルの1行に対応する構造体です。
 // APIレスポンスでは password_hash を返さないよう、PasswordHashにはjsonタグを付けていません。
+// balanceCoins はアプリ内仮想通貨の利用可能残高、salesCoins は売上金です。
 type User struct {
-	ID           int64     `json:"id"`
-	Name         string    `json:"name"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID               int64     `json:"id"`
+	Name             string    `json:"name"`
+	Email            string    `json:"email"`
+	PasswordHash     string    `json:"-"`
+	BalanceCoins     int       `json:"balanceCoins"`
+	SalesCoins       int       `json:"salesCoins"`
+	RatingAverage    float64   `json:"ratingAverage"`
+	RatingCount      int       `json:"ratingCount"`
+	TransactionCount int       `json:"transactionCount"`
+	ShippingRegion   string    `json:"shippingRegion"`
+	ShippingAddress  string    `json:"shippingAddress"`
+	CreatedAt        time.Time `json:"createdAt"`
 }
 
 // Item は items テーブルの1行に対応する構造体です。
-// Statusは available / sold / canceled のいずれかを想定します。
+// ProductCode は画面表示用の独自商品IDです。DBの内部IDとは別に見せることで、同名商品の識別を容易にします。
 type Item struct {
-	ID            int64     `json:"id"`
-	SellerID      int64     `json:"sellerId"`
-	SellerName    string    `json:"sellerName"`
-	Title         string    `json:"title"`
-	Description   string    `json:"description"`
-	Category      string    `json:"category"`
-	ConditionText string    `json:"conditionText"`
-	PriceYen      int       `json:"priceYen"`
-	ImageURL      string    `json:"imageUrl"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID                     int64      `json:"id"`
+	ProductCode            string     `json:"productCode"`
+	SellerID               int64      `json:"sellerId"`
+	SellerName             string     `json:"sellerName"`
+	SellerRatingAverage    float64    `json:"sellerRatingAverage"`
+	SellerRatingCount      int        `json:"sellerRatingCount"`
+	SellerTransactionCount int        `json:"sellerTransactionCount"`
+	Title                  string     `json:"title"`
+	Description            string     `json:"description"`
+	Category               string     `json:"category"`
+	ConditionText          string     `json:"conditionText"`
+	PriceYen               int        `json:"priceYen"`
+	ImageURL               string     `json:"imageUrl"`
+	Status                 string     `json:"status"`
+	DeliveryMethod         string     `json:"deliveryMethod"`
+	ShippingDays           int        `json:"shippingDays"`
+	ShipFromRegion         string     `json:"shipFromRegion"`
+	Size                   string     `json:"size"`
+	Color                  string     `json:"color"`
+	Tags                   string     `json:"tags"`
+	ChecklistCount         int        `json:"checklistCount"`
+	BuyerID                *int64     `json:"buyerId,omitempty"`
+	BuyerName              string     `json:"buyerName,omitempty"`
+	BuyerShippingAddress   string     `json:"buyerShippingAddress,omitempty"`
+	PurchaseID             *int64     `json:"purchaseId,omitempty"`
+	PurchaseStatus         string     `json:"purchaseStatus,omitempty"`
+	PurchaseCreatedAt      *time.Time `json:"purchaseCreatedAt,omitempty"`
+	ShippingDeadline       *time.Time `json:"shippingDeadline,omitempty"`
+	ShippedAt              *time.Time `json:"shippedAt,omitempty"`
+	CompletedAt            *time.Time `json:"completedAt,omitempty"`
+	CreatedAt              time.Time  `json:"createdAt"`
+	UpdatedAt              time.Time  `json:"updatedAt"`
 }
 
 // Purchase は purchases テーブルの1行に対応する構造体です。
 type Purchase struct {
-	ID        int64     `json:"id"`
-	ItemID    int64     `json:"itemId"`
-	BuyerID   int64     `json:"buyerId"`
-	SellerID  int64     `json:"sellerId"`
-	PriceYen  int       `json:"priceYen"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID               int64      `json:"id"`
+	ItemID           int64      `json:"itemId"`
+	BuyerID          int64      `json:"buyerId"`
+	SellerID         int64      `json:"sellerId"`
+	PriceYen         int        `json:"priceYen"`
+	Status           string     `json:"status"`
+	DeliveryAddress  string     `json:"deliveryAddress"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	ShippingDeadline time.Time  `json:"shippingDeadline"`
+	ShippedAt        *time.Time `json:"shippedAt,omitempty"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
 }
 
 // PurchaseHistory は購入履歴画面で表示しやすいよう、購入情報と商品情報をまとめた構造体です。
 type PurchaseHistory struct {
-	PurchaseID    int64     `json:"purchaseId"`
-	ItemID        int64     `json:"itemId"`
-	SellerID      int64     `json:"sellerId"`
-	SellerName    string    `json:"sellerName"`
-	Title         string    `json:"title"`
-	Description   string    `json:"description"`
-	Category      string    `json:"category"`
-	ConditionText string    `json:"conditionText"`
-	PriceYen      int       `json:"priceYen"`
-	ImageURL      string    `json:"imageUrl"`
-	Status        string    `json:"status"`
-	PurchasedAt   time.Time `json:"purchasedAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	PurchaseID          int64      `json:"purchaseId"`
+	ItemID              int64      `json:"itemId"`
+	ProductCode         string     `json:"productCode"`
+	SellerID            int64      `json:"sellerId"`
+	SellerName          string     `json:"sellerName"`
+	SellerRatingAverage float64    `json:"sellerRatingAverage"`
+	SellerRatingCount   int        `json:"sellerRatingCount"`
+	Title               string     `json:"title"`
+	Description         string     `json:"description"`
+	Category            string     `json:"category"`
+	ConditionText       string     `json:"conditionText"`
+	PriceYen            int        `json:"priceYen"`
+	ImageURL            string     `json:"imageUrl"`
+	Status              string     `json:"status"`
+	PurchaseStatus      string     `json:"purchaseStatus"`
+	DeliveryMethod      string     `json:"deliveryMethod"`
+	ShippingDays        int        `json:"shippingDays"`
+	ShipFromRegion      string     `json:"shipFromRegion"`
+	DeliveryAddress     string     `json:"deliveryAddress"`
+	PurchasedAt         time.Time  `json:"purchasedAt"`
+	ShippingDeadline    time.Time  `json:"shippingDeadline"`
+	ShippedAt           *time.Time `json:"shippedAt,omitempty"`
+	CompletedAt         *time.Time `json:"completedAt,omitempty"`
 }
 
-// Message は商品コメント欄の1投稿に対応する構造体です。
+// Message は公開コメント欄の1投稿に対応する構造体です。
 // ParentMessageID が nil のものは親コメント、値が入っているものは返信です。
 type Message struct {
 	ID              int64     `json:"id"`
@@ -72,6 +115,62 @@ type Message struct {
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
+// PrivateMessage は購入検討者と出品者だけが見られる非公開DMです。
+type PrivateMessage struct {
+	ID           int64     `json:"id"`
+	ItemID       int64     `json:"itemId"`
+	SenderID     int64     `json:"senderId"`
+	SenderName   string    `json:"senderName"`
+	ReceiverID   int64     `json:"receiverId"`
+	ReceiverName string    `json:"receiverName"`
+	Body         string    `json:"body"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// Notification はユーザーへの簡易通知です。
+type Notification struct {
+	ID        int64      `json:"id"`
+	UserID    int64      `json:"userId"`
+	ItemID    *int64     `json:"itemId,omitempty"`
+	Title     string     `json:"title"`
+	Body      string     `json:"body"`
+	ReadAt    *time.Time `json:"readAt,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+}
+
+// SavedSearch は保存した検索条件です。
+type SavedSearch struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"userId"`
+	Name      string    `json:"name"`
+	QueryJSON string    `json:"queryJson"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// BlockedUser はブロック済みユーザーです。
+type BlockedUser struct {
+	ID          int64     `json:"id"`
+	BlockerID   int64     `json:"blockerId"`
+	BlockedID   int64     `json:"blockedId"`
+	BlockedName string    `json:"blockedName"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// SupportMessage はユーザーから運営への問い合わせです。
+type SupportMessage struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"userId"`
+	UserName  string    `json:"userName"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// RecommendationResponse はAIおすすめ欄で使うレスポンスです。
+type RecommendationResponse struct {
+	Reason string `json:"reason"`
+	Items  []Item `json:"items"`
+}
+
 // RegisterRequest はユーザー登録APIのリクエストJSONです。
 type RegisterRequest struct {
 	Name     string `json:"name"`
@@ -79,40 +178,51 @@ type RegisterRequest struct {
 	Password string `json:"password"`
 }
 
-// LoginRequest はログインAPIのリクエストJSONです。
 type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
-// AuthResponse はログインや登録成功時に返すJSONです。
 type AuthResponse struct {
 	Token string `json:"token"`
 	User  User   `json:"user"`
 }
 
-// CreateItemRequest は商品出品APIのリクエストJSONです。
 type CreateItemRequest struct {
-	Title         string `json:"title"`
-	Description   string `json:"description"`
-	Category      string `json:"category"`
-	ConditionText string `json:"conditionText"`
-	PriceYen      int    `json:"priceYen"`
-	ImageURL      string `json:"imageUrl"`
+	Title          string `json:"title"`
+	Description    string `json:"description"`
+	Category       string `json:"category"`
+	ConditionText  string `json:"conditionText"`
+	PriceYen       int    `json:"priceYen"`
+	ImageURL       string `json:"imageUrl"`
+	DeliveryMethod string `json:"deliveryMethod"`
+	ShippingDays   int    `json:"shippingDays"`
+	ShipFromRegion string `json:"shipFromRegion"`
+	Size           string `json:"size"`
+	Color          string `json:"color"`
+	Tags           string `json:"tags"`
 }
 
-// UpdateItemRequest は商品情報編集APIのリクエストJSONです。
-// 出品者だけが、自分の商品を編集するために使います。
-type UpdateItemRequest struct {
-	Title         string `json:"title"`
-	Description   string `json:"description"`
-	Category      string `json:"category"`
-	ConditionText string `json:"conditionText"`
-	PriceYen      int    `json:"priceYen"`
-	ImageURL      string `json:"imageUrl"`
+type UpdateItemRequest = CreateItemRequest
+
+type PurchaseRequest struct {
+	DeliveryAddress string `json:"deliveryAddress"`
 }
 
-// GenerateDescriptionRequest はGeminiで商品説明を生成するAPIの入力です。
+type CompletePurchaseRequest struct {
+	Rating        int    `json:"rating"`
+	RatingComment string `json:"ratingComment"`
+}
+
+type ChargeRequest struct {
+	Amount int `json:"amount"`
+}
+
+type UpdateProfileRequest struct {
+	ShippingRegion  string `json:"shippingRegion"`
+	ShippingAddress string `json:"shippingAddress"`
+}
+
 type GenerateDescriptionRequest struct {
 	Title         string `json:"title"`
 	Category      string `json:"category"`
@@ -120,30 +230,42 @@ type GenerateDescriptionRequest struct {
 	Keywords      string `json:"keywords"`
 }
 
-// AskItemRequest は商品についてGeminiに質問するAPIの入力です。
 type AskItemRequest struct {
 	Question string `json:"question"`
 }
 
-// AITextResponse はAI生成テキストを返す共通レスポンスです。
 type AITextResponse struct {
 	Text string `json:"text"`
 }
 
-// CreateMessageRequest はコメント投稿APIのリクエストJSONです。
-// ParentMessageID を指定すると、既存コメントへの返信になります。
 type CreateMessageRequest struct {
 	ParentMessageID *int64 `json:"parentMessageId,omitempty"`
 	Body            string `json:"body"`
-	ReceiverID      int64  `json:"receiverId,omitempty"` // 旧実装との互換用。新実装ではサーバ側で送信先を決めます。
+	ReceiverID      int64  `json:"receiverId,omitempty"`
 }
 
-// ChecklistStatus は商品がチェックリストに入っているかを返すレスポンスです。
+type CreatePrivateMessageRequest struct {
+	Body       string `json:"body"`
+	ReceiverID int64  `json:"receiverId,omitempty"`
+}
+
 type ChecklistStatus struct {
 	Checked bool `json:"checked"`
 }
 
-// ErrorResponse はエラー時に返すJSONの形です。
+type SaveSearchRequest struct {
+	Name      string `json:"name"`
+	QueryJSON string `json:"queryJson"`
+}
+
+type BlockUserRequest struct {
+	UserID int64 `json:"userId"`
+}
+
+type SupportMessageRequest struct {
+	Body string `json:"body"`
+}
+
 type ErrorResponse struct {
 	Error string `json:"error"`
 }

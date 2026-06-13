@@ -16,7 +16,7 @@ import (
 func Open(cfg config.Config) (*sql.DB, error) {
 	// parseTime=true は、MySQLのDATETIMEをGoのtime.Timeとして扱うための設定です。
 	// loc=Local は、ローカルタイムゾーンとして解釈するための設定です。
-	dsnParams := "parseTime=true&charset=utf8mb4&loc=Local"
+	dsnParams := "parseTime=true&charset=utf8mb4&loc=Asia%2FTokyo"
 
 	var dsn string
 

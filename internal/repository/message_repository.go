@@ -8,17 +8,11 @@ import (
 	"hackathon-backend/internal/models"
 )
 
-// MessageRepository は messages テーブルへのDB操作を担当します。
-// 旧来の1対1 DMではなく、商品ページに紐づくコメント欄として利用します。
-type MessageRepository struct {
-	DB *sql.DB
-}
+// MessageRepository は公開コメントと非公開DMへのDB操作を担当します。
+type MessageRepository struct{ DB *sql.DB }
 
-// ListByItem は商品IDに紐づくコメント一覧を取得します。
-// 親コメントは「最後に返信された時刻」をupdated_atとして更新するため、最新の議論が上に来ます。
 func (r *MessageRepository) ListByItem(ctx context.Context, itemID int64) ([]models.Message, error) {
-	rows, err := r.DB.QueryContext(
-		ctx,
+	rows, err := r.DB.QueryContext(ctx,
 		`SELECT m.id, m.item_id, m.parent_message_id, m.sender_id, su.name, m.receiver_id, ru.name,
                 m.body, CASE WHEN m.sender_id = i.seller_id THEN 1 ELSE 0 END AS is_seller, m.created_at, m.updated_at
          FROM messages m
@@ -29,67 +23,55 @@ func (r *MessageRepository) ListByItem(ctx context.Context, itemID int64) ([]mod
          WHERE m.item_id = ?
          ORDER BY COALESCE(parent.updated_at, m.updated_at) DESC,
                   CASE WHEN m.parent_message_id IS NULL THEN 0 ELSE 1 END ASC,
-                  m.created_at ASC`,
-		itemID,
-	)
+                  m.created_at ASC`, itemID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
 	messages := []models.Message{}
 	for rows.Next() {
-		var msg models.Message
-		var parentID sql.NullInt64
-		var isSellerInt int
-		if err := rows.Scan(
-			&msg.ID,
-			&msg.ItemID,
-			&parentID,
-			&msg.SenderID,
-			&msg.SenderName,
-			&msg.ReceiverID,
-			&msg.ReceiverName,
-			&msg.Body,
-			&isSellerInt,
-			&msg.CreatedAt,
-			&msg.UpdatedAt,
-		); err != nil {
+		msg, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		if parentID.Valid {
-			v := parentID.Int64
-			msg.ParentMessageID = &v
-		}
-		msg.IsSeller = isSellerInt == 1
 		messages = append(messages, msg)
 	}
-
 	return messages, rows.Err()
 }
 
-// Create は新しいコメントまたは返信を保存します。
-// receiver_idは、親コメントなら出品者、返信なら返信先コメントの投稿者に自動設定します。
+func scanMessage(scanner interface{ Scan(dest ...any) error }) (models.Message, error) {
+	var msg models.Message
+	var parentID sql.NullInt64
+	var isSeller int
+	err := scanner.Scan(&msg.ID, &msg.ItemID, &parentID, &msg.SenderID, &msg.SenderName, &msg.ReceiverID, &msg.ReceiverName, &msg.Body, &isSeller, &msg.CreatedAt, &msg.UpdatedAt)
+	if parentID.Valid {
+		v := parentID.Int64
+		msg.ParentMessageID = &v
+	}
+	msg.IsSeller = isSeller == 1
+	return msg, err
+}
+
 func (r *MessageRepository) Create(ctx context.Context, itemID, senderID int64, parentMessageID *int64, body string) (models.Message, error) {
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return models.Message{}, err
 	}
 	defer tx.Rollback()
-
-	var receiverID int64
-	var sellerID int64
-	if err := tx.QueryRowContext(ctx, `SELECT seller_id FROM items WHERE id = ?`, itemID).Scan(&sellerID); err != nil {
+	var receiverID, sellerID int64
+	if err := tx.QueryRowContext(ctx, `SELECT seller_id FROM items WHERE id=?`, itemID).Scan(&sellerID); err != nil {
 		return models.Message{}, err
 	}
-
+	var blocked int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blocked_users WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`, senderID, sellerID, sellerID, senderID).Scan(&blocked); err != nil {
+		return models.Message{}, err
+	}
+	if blocked > 0 {
+		return models.Message{}, fmt.Errorf("ブロック関係にあるためコメントできません")
+	}
 	if parentMessageID != nil {
 		var parentItemID int64
-		if err := tx.QueryRowContext(
-			ctx,
-			`SELECT item_id, sender_id FROM messages WHERE id = ?`,
-			*parentMessageID,
-		).Scan(&parentItemID, &receiverID); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT item_id, sender_id FROM messages WHERE id=?`, *parentMessageID).Scan(&parentItemID, &receiverID); err != nil {
 			return models.Message{}, err
 		}
 		if parentItemID != itemID {
@@ -98,75 +80,94 @@ func (r *MessageRepository) Create(ctx context.Context, itemID, senderID int64, 
 	} else {
 		receiverID = sellerID
 	}
-
-	result, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO messages (item_id, parent_message_id, sender_id, receiver_id, body)
-         VALUES (?, ?, ?, ?, ?)`,
-		itemID,
-		parentMessageID,
-		senderID,
-		receiverID,
-		body,
-	)
+	result, err := tx.ExecContext(ctx, `INSERT INTO messages (item_id,parent_message_id,sender_id,receiver_id,body) VALUES (?,?,?,?,?)`, itemID, parentMessageID, senderID, receiverID, body)
 	if err != nil {
 		return models.Message{}, err
 	}
-
 	id, err := result.LastInsertId()
 	if err != nil {
 		return models.Message{}, err
 	}
-
-	// 返信が追加されたときに親コメントのupdated_atを更新し、スレッド全体を上に上げます。
 	if parentMessageID != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, *parentMessageID); err != nil {
-			return models.Message{}, err
-		}
+		_, _ = tx.ExecContext(ctx, `UPDATE messages SET updated_at=CURRENT_TIMESTAMP WHERE id=?`, *parentMessageID)
 	}
-
+	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id,item_id,title,body) VALUES (?, ?, 'コメント通知', '商品にコメントまたは返信が追加されました')`, receiverID, itemID)
 	if err := tx.Commit(); err != nil {
 		return models.Message{}, err
 	}
-
 	return r.FindByID(ctx, id)
 }
 
-// FindByID は作成直後のコメントをレスポンスとして返すために利用します。
 func (r *MessageRepository) FindByID(ctx context.Context, id int64) (models.Message, error) {
-	var msg models.Message
-	var parentID sql.NullInt64
-	var isSellerInt int
-	err := r.DB.QueryRowContext(
-		ctx,
+	return scanMessage(r.DB.QueryRowContext(ctx,
 		`SELECT m.id, m.item_id, m.parent_message_id, m.sender_id, su.name, m.receiver_id, ru.name,
                 m.body, CASE WHEN m.sender_id = i.seller_id THEN 1 ELSE 0 END AS is_seller, m.created_at, m.updated_at
-         FROM messages m
-         JOIN items i ON i.id = m.item_id
-         JOIN users su ON su.id = m.sender_id
-         JOIN users ru ON ru.id = m.receiver_id
-         WHERE m.id = ?`,
-		id,
-	).Scan(
-		&msg.ID,
-		&msg.ItemID,
-		&parentID,
-		&msg.SenderID,
-		&msg.SenderName,
-		&msg.ReceiverID,
-		&msg.ReceiverName,
-		&msg.Body,
-		&isSellerInt,
-		&msg.CreatedAt,
-		&msg.UpdatedAt,
-	)
+         FROM messages m JOIN items i ON i.id=m.item_id JOIN users su ON su.id=m.sender_id JOIN users ru ON ru.id=m.receiver_id WHERE m.id=?`, id))
+}
+
+func (r *MessageRepository) ListPrivateByItem(ctx context.Context, itemID, userID int64) ([]models.PrivateMessage, error) {
+	rows, err := r.DB.QueryContext(ctx,
+		`SELECT p.id, p.item_id, p.sender_id, su.name, p.receiver_id, ru.name, p.body, p.created_at
+         FROM private_messages p
+         JOIN users su ON su.id = p.sender_id
+         JOIN users ru ON ru.id = p.receiver_id
+         WHERE p.item_id = ? AND (p.sender_id = ? OR p.receiver_id = ?)
+         ORDER BY p.created_at ASC`, itemID, userID, userID)
 	if err != nil {
-		return models.Message{}, err
+		return nil, err
 	}
-	if parentID.Valid {
-		v := parentID.Int64
-		msg.ParentMessageID = &v
+	defer rows.Close()
+	var out []models.PrivateMessage
+	for rows.Next() {
+		var m models.PrivateMessage
+		if err := rows.Scan(&m.ID, &m.ItemID, &m.SenderID, &m.SenderName, &m.ReceiverID, &m.ReceiverName, &m.Body, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
 	}
-	msg.IsSeller = isSellerInt == 1
-	return msg, nil
+	return out, rows.Err()
+}
+
+func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID, receiverID int64, body string) (models.PrivateMessage, error) {
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return models.PrivateMessage{}, err
+	}
+	defer tx.Rollback()
+	var sellerID int64
+	if err := tx.QueryRowContext(ctx, `SELECT seller_id FROM items WHERE id=?`, itemID).Scan(&sellerID); err != nil {
+		return models.PrivateMessage{}, err
+	}
+	if receiverID == 0 {
+		receiverID = sellerID
+	}
+	if senderID != sellerID && receiverID != sellerID {
+		return models.PrivateMessage{}, fmt.Errorf("DMは購入検討者と出品者の間でのみ送れます")
+	}
+	var blocked int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blocked_users WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`, senderID, receiverID, receiverID, senderID).Scan(&blocked); err != nil {
+		return models.PrivateMessage{}, err
+	}
+	if blocked > 0 {
+		return models.PrivateMessage{}, fmt.Errorf("ブロック関係にあるためDMできません")
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO private_messages (item_id,sender_id,receiver_id,body) VALUES (?,?,?,?)`, itemID, senderID, receiverID, body)
+	if err != nil {
+		return models.PrivateMessage{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return models.PrivateMessage{}, err
+	}
+	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id,item_id,title,body) VALUES (?, ?, 'DM通知', '商品について非公開DMが届きました')`, receiverID, itemID)
+	if err := tx.Commit(); err != nil {
+		return models.PrivateMessage{}, err
+	}
+	return r.FindPrivateByID(ctx, id)
+}
+
+func (r *MessageRepository) FindPrivateByID(ctx context.Context, id int64) (models.PrivateMessage, error) {
+	var m models.PrivateMessage
+	err := r.DB.QueryRowContext(ctx, `SELECT p.id,p.item_id,p.sender_id,su.name,p.receiver_id,ru.name,p.body,p.created_at FROM private_messages p JOIN users su ON su.id=p.sender_id JOIN users ru ON ru.id=p.receiver_id WHERE p.id=?`, id).Scan(&m.ID, &m.ItemID, &m.SenderID, &m.SenderName, &m.ReceiverID, &m.ReceiverName, &m.Body, &m.CreatedAt)
+	return m, err
 }
