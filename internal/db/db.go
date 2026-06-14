@@ -15,8 +15,11 @@ import (
 // ローカル開発では TCP 接続、Cloud Run + Cloud SQL では Unix socket 接続を使えるようにしています。
 func Open(cfg config.Config) (*sql.DB, error) {
 	// parseTime=true は、MySQLのDATETIMEをGoのtime.Timeとして扱うための設定です。
-	// loc=Local は、ローカルタイムゾーンとして解釈するための設定です。
-	dsnParams := "parseTime=true&charset=utf8mb4&loc=Asia%2FTokyo"
+	// Cloud SQLやMySQLコンテナのDATETIMEはUTC相当で保存される前提に統一します。
+	// loc=UTCにしてGo側ではUTCとして受け取り、フロントエンドでAsia/Tokyo表示に変換します。
+	// ここをAsia/Tokyoにすると、UTCで保存された12:04を日本時間12:04として解釈してしまい、
+	// 実際の21:04より9時間前に表示される原因になります。
+	dsnParams := "parseTime=true&charset=utf8mb4&loc=UTC"
 
 	var dsn string
 

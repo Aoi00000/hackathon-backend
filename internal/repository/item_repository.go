@@ -13,16 +13,17 @@ import (
 type ItemRepository struct{ DB *sql.DB }
 
 type ItemFilter struct {
-	Query         string
-	Category      string
-	Size          string
-	Color         string
-	ConditionText string
-	Status        string
-	MinPrice      int
-	MaxPrice      int
-	Tag           string
-	Sort          string
+	Query          string
+	Category       string
+	Size           string
+	Color          string
+	ConditionText  string
+	Status         string
+	MinPrice       int
+	MaxPrice       int
+	Tag            string
+	Sort           string
+	DeliveryWithin string
 }
 
 func scanItem(scanner interface{ Scan(dest ...any) error }) (models.Item, error) {
@@ -105,12 +106,117 @@ func itemSelect() string {
                 i.title, i.description, i.category, i.condition_text, i.price_yen, i.image_url, i.status,
                 i.delivery_method, i.shipping_days, i.ship_from_region, i.size, i.color, i.tags,
                 (SELECT COUNT(*) FROM checklist c WHERE c.item_id = i.id) AS checklist_count,
-                p.buyer_id, buyer.name, buyer.shipping_address, p.id, p.status, p.created_at, p.shipping_deadline, p.shipped_at, p.completed_at,
+                p.buyer_id, buyer.name, p.delivery_address, p.id, p.status, p.created_at, p.shipping_deadline, p.shipped_at, p.completed_at,
                 i.created_at, i.updated_at
          FROM items i
          JOIN users u ON u.id = i.seller_id
          LEFT JOIN purchases p ON p.item_id = i.id
          LEFT JOIN users buyer ON buyer.id = p.buyer_id`
+}
+
+func splitFilterValues(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func addInFilter(query *string, args *[]any, column string, raw string) {
+	values := splitFilterValues(raw)
+	if len(values) == 0 {
+		return
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(values)), ",")
+	*query += fmt.Sprintf(" AND %s IN (%s)", column, placeholders)
+	for _, v := range values {
+		*args = append(*args, v)
+	}
+}
+
+func normalizeKanaJP(value string) string {
+	// カタカナをひらがなに寄せます。
+	// 例: ギター -> ぎたー、タマネギ -> たまねぎ。
+	runes := []rune(value)
+	for i, r := range runes {
+		if r >= 'ァ' && r <= 'ヶ' {
+			runes[i] = r - 0x60
+		}
+	}
+	return string(runes)
+}
+
+func normalizeJP(value string) string {
+	// DB検索でSQLだけに頼ると、漢字/ひらがな/カタカナの表記揺れを拾いにくくなります。
+	// 依存を増やさずに動かすため、代表的な語の読みを辞書化し、
+	// その後に記号や空白を除去して曖昧検索に使います。
+	normalized := normalizeKanaJP(value)
+	replacer := strings.NewReplacer(
+		" ", "", "　", "", "-", "", "_", "", "/", "", "・", "", ",", "", "，", "", ".", "", "．", "", "、", "", "。", "", "(", "", ")", "", "（", "", "）", "",
+		"玉葱", "玉ねぎ", "たまねぎ", "玉ねぎ", "onion", "玉ねぎ",
+		"人参", "にんじん", "carrot", "にんじん",
+		"馬鈴薯", "じゃがいも", "potato", "じゃがいも",
+		"食べ物", "食品", "フード", "食品",
+		"教科書", "参考書", "教材", "参考書", "書籍", "本",
+		"スマートフォン", "スマホ", "携帯", "スマホ",
+		"数学", "すうがく", "算数", "すうがく", "math", "すうがく",
+		"ギター", "ぎたー", "guitar", "ぎたー", "エレキギター", "ぎたー", "アコギ", "ぎたー",
+		"大学受験", "受験", "入試", "受験",
+	)
+	return strings.ToLower(replacer.Replace(normalized))
+}
+
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	if len(ra) == 0 {
+		return len(rb)
+	}
+	if len(rb) == 0 {
+		return len(ra)
+	}
+	dp := make([][]int, len(ra)+1)
+	for i := range dp {
+		dp[i] = make([]int, len(rb)+1)
+		dp[i][0] = i
+	}
+	for j := 0; j <= len(rb); j++ {
+		dp[0][j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		for j := 1; j <= len(rb); j++ {
+			cost := 0
+			if ra[i-1] != rb[j-1] {
+				cost = 1
+			}
+			dp[i][j] = min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost)
+		}
+	}
+	return dp[len(ra)][len(rb)]
+}
+
+func fuzzyMatchItem(item models.Item, query string) bool {
+	q := normalizeJP(query)
+	if q == "" {
+		return true
+	}
+	target := normalizeJP(strings.Join([]string{item.Title, item.Description, item.Category, item.ConditionText, item.Size, item.Color, item.Tags, item.SellerName}, " "))
+	if strings.Contains(target, q) {
+		return true
+	}
+	qr := []rune(q)
+	tr := []rune(target)
+	if len(qr) >= 3 && len(tr) >= len(qr) {
+		for i := 0; i+len(qr) <= len(tr); i++ {
+			if levenshtein(string(tr[i:i+len(qr)]), q) <= 1 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *ItemRepository) List(ctx context.Context, f ItemFilter, viewerID *int64) ([]models.Item, error) {
@@ -120,31 +226,13 @@ func (r *ItemRepository) List(ctx context.Context, f ItemFilter, viewerID *int64
 		query += ` AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.blocker_id = ? AND b.blocked_id = i.seller_id) OR (b.blocker_id = i.seller_id AND b.blocked_id = ?))`
 		args = append(args, *viewerID, *viewerID)
 	}
-	if f.Query != "" {
-		like := "%" + f.Query + "%"
-		query += ` AND (i.title LIKE ? OR i.description LIKE ? OR i.category LIKE ? OR i.tags LIKE ?)`
-		args = append(args, like, like, like, like)
-	}
-	if f.Category != "" {
-		query += ` AND i.category = ?`
-		args = append(args, f.Category)
-	}
-	if f.Size != "" {
-		query += ` AND i.size LIKE ?`
-		args = append(args, "%"+f.Size+"%")
-	}
-	if f.Color != "" {
-		query += ` AND i.color LIKE ?`
-		args = append(args, "%"+f.Color+"%")
-	}
-	if f.ConditionText != "" {
-		query += ` AND i.condition_text = ?`
-		args = append(args, f.ConditionText)
-	}
-	if f.Status != "" {
-		query += ` AND i.status = ?`
-		args = append(args, f.Status)
-	}
+	// キーワード検索は、漢字/ひらがな/表記揺れをGo側で柔軟に判定します。
+	// そのためSQLでは絞り込みすぎず、カテゴリなど確実な条件だけDBで絞ります。
+	addInFilter(&query, &args, "i.category", f.Category)
+	addInFilter(&query, &args, "i.size", f.Size)
+	addInFilter(&query, &args, "i.color", f.Color)
+	addInFilter(&query, &args, "i.condition_text", f.ConditionText)
+	addInFilter(&query, &args, "i.status", f.Status)
 	if f.MinPrice > 0 {
 		query += ` AND i.price_yen >= ?`
 		args = append(args, f.MinPrice)
@@ -156,6 +244,20 @@ func (r *ItemRepository) List(ctx context.Context, f ItemFilter, viewerID *int64
 	if f.Tag != "" {
 		query += ` AND i.tags LIKE ?`
 		args = append(args, "%"+f.Tag+"%")
+	}
+
+	// 発送までの日数は、実際には「発送までの日数」を簡易的に近似して検索します。
+	// 画面上では「本日中」「明日中」などユーザーに分かりやすい言葉を使い、
+	// DB上では shipping_days の上限/下限に変換します。
+	switch f.DeliveryWithin {
+	case "today", "tomorrow":
+		query += ` AND i.shipping_days <= 1`
+	case "3days":
+		query += ` AND i.shipping_days <= 3`
+	case "week":
+		query += ` AND i.shipping_days <= 7`
+	case "later":
+		query += ` AND i.shipping_days > 7`
 	}
 	switch f.Sort {
 	case "price_asc":
@@ -169,7 +271,7 @@ func (r *ItemRepository) List(ctx context.Context, f ItemFilter, viewerID *int64
 	default:
 		query += ` ORDER BY i.updated_at DESC`
 	}
-	query += ` LIMIT 100`
+	query += ` LIMIT 300`
 	rows, err := r.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -181,7 +283,12 @@ func (r *ItemRepository) List(ctx context.Context, f ItemFilter, viewerID *int64
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		if fuzzyMatchItem(item, f.Query) {
+			items = append(items, item)
+		}
+	}
+	if len(items) > 100 {
+		items = items[:100]
 	}
 	return items, rows.Err()
 }
@@ -228,6 +335,7 @@ func (r *ItemRepository) Create(ctx context.Context, sellerID int64, req models.
 	if _, err := r.DB.ExecContext(ctx, `UPDATE items SET product_code = ? WHERE id = ?`, code, id); err != nil {
 		return models.Item{}, err
 	}
+	_, _ = r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, '出品完了', '商品の出品が完了しました')`, sellerID, id)
 	return r.FindByID(ctx, id)
 }
 
@@ -326,6 +434,9 @@ func (r *ItemRepository) Purchase(ctx context.Context, itemID, buyerID int64, de
 	if deliveryAddress == "" {
 		_ = tx.QueryRowContext(ctx, `SELECT COALESCE(shipping_address, '') FROM users WHERE id=?`, buyerID).Scan(&deliveryAddress)
 	}
+	if strings.TrimSpace(deliveryAddress) == "" {
+		return models.Purchase{}, fmt.Errorf("お届け先住所を入力してください")
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET balance_coins=balance_coins-? WHERE id=?`, priceYen, buyerID); err != nil {
 		return models.Purchase{}, err
 	}
@@ -364,6 +475,7 @@ func (r *ItemRepository) Ship(ctx context.Context, itemID, sellerID int64) (mode
 	}
 	_ = r.DB.QueryRowContext(ctx, `SELECT id, item_id, buyer_id, seller_id, price_yen, status, delivery_address, created_at, shipping_deadline, shipped_at, completed_at FROM purchases WHERE item_id=?`, itemID).Scan(&p.ID, &p.ItemID, &p.BuyerID, &p.SellerID, &p.PriceYen, &p.Status, &p.DeliveryAddress, &p.CreatedAt, &p.ShippingDeadline, &p.ShippedAt, &p.CompletedAt)
 	_, _ = r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, '発送通知', '出品者が発送通知を行いました。到着後に受け取り評価をしてください')`, p.BuyerID, itemID)
+	_, _ = r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, '発送通知送信済み', '発送通知を送信しました。購入者の受け取り評価をお待ちください')`, p.SellerID, itemID)
 	return p, nil
 }
 
@@ -407,7 +519,7 @@ func (r *ItemRepository) FindPurchaseByItem(ctx context.Context, itemID int64) (
 }
 
 func (r *ItemRepository) ListPurchasesByBuyer(ctx context.Context, buyerID int64) ([]models.PurchaseHistory, error) {
-	rows, err := r.DB.QueryContext(ctx, `SELECT p.id, i.id, i.product_code, i.seller_id, u.name, CASE WHEN u.rating_count=0 THEN 0 ELSE u.rating_sum/u.rating_count END, u.rating_count, i.title, i.description, i.category, i.condition_text, p.price_yen, COALESCE(i.image_url,''), i.status, p.status, i.delivery_method, i.shipping_days, i.ship_from_region, p.delivery_address, p.created_at, p.shipping_deadline, p.shipped_at, p.completed_at FROM purchases p JOIN items i ON i.id=p.item_id JOIN users u ON u.id=i.seller_id WHERE p.buyer_id=? ORDER BY p.created_at DESC`, buyerID)
+	rows, err := r.DB.QueryContext(ctx, `SELECT p.id, i.id, i.product_code, i.seller_id, u.name, CASE WHEN u.rating_count=0 THEN 0 ELSE u.rating_sum/u.rating_count END, u.rating_count, i.title, i.description, i.category, i.condition_text, p.price_yen, COALESCE(i.image_url,''), i.status, p.status, i.delivery_method, i.shipping_days, i.ship_from_region, p.delivery_address, p.created_at, p.shipping_deadline, p.shipped_at, p.completed_at, p.rating, COALESCE(p.rating_comment,'') FROM purchases p JOIN items i ON i.id=p.item_id JOIN users u ON u.id=i.seller_id WHERE p.buyer_id=? ORDER BY p.created_at DESC`, buyerID)
 	if err != nil {
 		return nil, err
 	}
@@ -415,8 +527,13 @@ func (r *ItemRepository) ListPurchasesByBuyer(ctx context.Context, buyerID int64
 	var out []models.PurchaseHistory
 	for rows.Next() {
 		var x models.PurchaseHistory
-		if err := rows.Scan(&x.PurchaseID, &x.ItemID, &x.ProductCode, &x.SellerID, &x.SellerName, &x.SellerRatingAverage, &x.SellerRatingCount, &x.Title, &x.Description, &x.Category, &x.ConditionText, &x.PriceYen, &x.ImageURL, &x.Status, &x.PurchaseStatus, &x.DeliveryMethod, &x.ShippingDays, &x.ShipFromRegion, &x.DeliveryAddress, &x.PurchasedAt, &x.ShippingDeadline, &x.ShippedAt, &x.CompletedAt); err != nil {
+		var rating sql.NullInt64
+		if err := rows.Scan(&x.PurchaseID, &x.ItemID, &x.ProductCode, &x.SellerID, &x.SellerName, &x.SellerRatingAverage, &x.SellerRatingCount, &x.Title, &x.Description, &x.Category, &x.ConditionText, &x.PriceYen, &x.ImageURL, &x.Status, &x.PurchaseStatus, &x.DeliveryMethod, &x.ShippingDays, &x.ShipFromRegion, &x.DeliveryAddress, &x.PurchasedAt, &x.ShippingDeadline, &x.ShippedAt, &x.CompletedAt, &rating, &x.RatingComment); err != nil {
 			return nil, err
+		}
+		if rating.Valid {
+			v := int(rating.Int64)
+			x.Rating = &v
 		}
 		out = append(out, x)
 	}
@@ -424,12 +541,15 @@ func (r *ItemRepository) ListPurchasesByBuyer(ctx context.Context, buyerID int64
 }
 
 func (r *ItemRepository) ListChecklist(ctx context.Context, userID int64) ([]models.Item, error) {
+	// checklist に該当する商品が0件でも JSON では [] として扱いやすいよう、
+	// nil ではなく空スライスで初期化してから append する。
+	items := []models.Item{}
+
 	rows, err := r.DB.QueryContext(ctx, itemSelect()+` JOIN checklist c2 ON c2.item_id=i.id WHERE c2.user_id=? AND i.status <> 'canceled' ORDER BY c2.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []models.Item
 	for rows.Next() {
 		item, err := scanItem(rows)
 		if err != nil {
@@ -458,12 +578,12 @@ func (r *ItemRepository) RemoveChecklist(ctx context.Context, userID, itemID int
 }
 
 func (r *ItemRepository) Recommend(ctx context.Context, userID int64) ([]models.Item, error) {
+	items := []models.Item{}
 	rows, err := r.DB.QueryContext(ctx, itemSelect()+` WHERE i.status='available' AND i.seller_id<>? AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.blocker_id=? AND b.blocked_id=i.seller_id) OR (b.blocker_id=i.seller_id AND b.blocked_id=?)) ORDER BY checklist_count DESC, i.updated_at DESC LIMIT 6`, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []models.Item
 	for rows.Next() {
 		item, err := scanItem(rows)
 		if err != nil {
@@ -474,6 +594,18 @@ func (r *ItemRepository) Recommend(ctx context.Context, userID int64) ([]models.
 	return items, rows.Err()
 }
 
+// SimilarPriceStats は、同カテゴリ商品の価格分布を取得します。
+// AI価格アドバイスでは、外部データや重いML推論が使えない場合でも、
+// 現在アプリ内に存在する類似出品の中央値・件数を用いて価格感を説明します。
+func (r *ItemRepository) SimilarPriceStats(ctx context.Context, category string, excludeID int64) (count int, min int, max int, avg float64, err error) {
+	row := r.DB.QueryRowContext(ctx, `
+        SELECT COUNT(*), COALESCE(MIN(price_yen),0), COALESCE(MAX(price_yen),0), COALESCE(AVG(price_yen),0)
+        FROM items
+        WHERE status <> 'canceled' AND category = ? AND id <> ?`, category, excludeID)
+	err = row.Scan(&count, &min, &max, &avg)
+	return
+}
+
 func BuildFilterFromQuery(values map[string][]string) ItemFilter {
 	get := func(k string) string {
 		if len(values[k]) == 0 {
@@ -482,5 +614,5 @@ func BuildFilterFromQuery(values map[string][]string) ItemFilter {
 		return strings.TrimSpace(values[k][0])
 	}
 	atoi := func(s string) int { var v int; fmt.Sscanf(s, "%d", &v); return v }
-	return ItemFilter{Query: get("q"), Category: get("category"), Size: get("size"), Color: get("color"), ConditionText: get("condition"), Status: get("status"), MinPrice: atoi(get("minPrice")), MaxPrice: atoi(get("maxPrice")), Tag: get("tag"), Sort: get("sort")}
+	return ItemFilter{Query: get("q"), Category: get("category"), Size: get("size"), Color: get("color"), ConditionText: get("condition"), Status: get("status"), MinPrice: atoi(get("minPrice")), MaxPrice: atoi(get("maxPrice")), Tag: get("tag"), Sort: get("sort"), DeliveryWithin: get("deliveryWithin")}
 }

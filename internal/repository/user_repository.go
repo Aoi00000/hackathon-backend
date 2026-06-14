@@ -107,6 +107,8 @@ func (r *UserRepository) Charge(ctx context.Context, userID int64, amount int) (
 	if _, err := r.DB.ExecContext(ctx, `UPDATE users SET balance_coins = balance_coins + ? WHERE id = ?`, amount, userID); err != nil {
 		return models.User{}, err
 	}
+	// チャージはユーザーにとって重要な残高変動なので、通知一覧にも記録します。
+	_, _ = r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, NULL, 'チャージ完了', ?)`, userID, fmt.Sprintf("%dコインをチャージしました", amount))
 	return r.FindByID(ctx, userID)
 }
 
@@ -121,6 +123,7 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, userID int64, req mo
 	if err != nil {
 		return models.User{}, err
 	}
+	_, _ = r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, NULL, '住所保存完了', '発送元・お届け先住所を保存しました')`, userID)
 	return r.FindByID(ctx, userID)
 }
 
@@ -230,6 +233,29 @@ func (r *UserRepository) FindSavedSearch(ctx context.Context, userID, id int64) 
 	return s, err
 }
 
+func (r *UserRepository) MarkNotificationRead(ctx context.Context, userID, notificationID int64) (models.Notification, error) {
+	_, err := r.DB.ExecContext(ctx, `UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND user_id = ?`, notificationID, userID)
+	if err != nil {
+		return models.Notification{}, err
+	}
+	var n models.Notification
+	var itemID sql.NullInt64
+	var readAt sql.NullTime
+	err = r.DB.QueryRowContext(ctx, `SELECT id, user_id, item_id, title, body, read_at, created_at FROM notifications WHERE id = ? AND user_id = ?`, notificationID, userID).Scan(&n.ID, &n.UserID, &itemID, &n.Title, &n.Body, &readAt, &n.CreatedAt)
+	if err != nil {
+		return models.Notification{}, err
+	}
+	if itemID.Valid {
+		v := itemID.Int64
+		n.ItemID = &v
+	}
+	if readAt.Valid {
+		v := readAt.Time
+		n.ReadAt = &v
+	}
+	return n, nil
+}
+
 func (r *UserRepository) ListSavedSearches(ctx context.Context, userID int64) ([]models.SavedSearch, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT id, user_id, name, query_json, created_at FROM saved_searches WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -252,8 +278,11 @@ func (r *UserRepository) DeleteSavedSearch(ctx context.Context, userID, id int64
 	return err
 }
 
-func (r *UserRepository) SendSupportMessage(ctx context.Context, userID int64, body string) (models.SupportMessage, error) {
-	result, err := r.DB.ExecContext(ctx, `INSERT INTO support_messages (user_id, body) VALUES (?, ?)`, userID, body)
+func (r *UserRepository) SendSupportMessage(ctx context.Context, userID int64, subject, body string) (models.SupportMessage, error) {
+	if subject == "" {
+		subject = "一般相談"
+	}
+	result, err := r.DB.ExecContext(ctx, `INSERT INTO support_messages (user_id, subject, body) VALUES (?, ?, ?)`, userID, subject, body)
 	if err != nil {
 		return models.SupportMessage{}, err
 	}
@@ -261,7 +290,28 @@ func (r *UserRepository) SendSupportMessage(ctx context.Context, userID int64, b
 	if err != nil {
 		return models.SupportMessage{}, err
 	}
+	return r.FindSupportMessage(ctx, userID, id)
+}
+
+func (r *UserRepository) FindSupportMessage(ctx context.Context, userID, id int64) (models.SupportMessage, error) {
 	var msg models.SupportMessage
-	err = r.DB.QueryRowContext(ctx, `SELECT s.id, s.user_id, u.name, s.body, s.created_at FROM support_messages s JOIN users u ON u.id = s.user_id WHERE s.id = ?`, id).Scan(&msg.ID, &msg.UserID, &msg.UserName, &msg.Body, &msg.CreatedAt)
+	err := r.DB.QueryRowContext(ctx, `SELECT s.id, s.user_id, u.name, COALESCE(s.subject, '一般相談'), s.body, s.created_at FROM support_messages s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.user_id = ?`, id, userID).Scan(&msg.ID, &msg.UserID, &msg.UserName, &msg.Subject, &msg.Body, &msg.CreatedAt)
 	return msg, err
+}
+
+func (r *UserRepository) ListSupportMessages(ctx context.Context, userID int64) ([]models.SupportMessage, error) {
+	rows, err := r.DB.QueryContext(ctx, `SELECT s.id, s.user_id, u.name, COALESCE(s.subject, '一般相談'), s.body, s.created_at FROM support_messages s JOIN users u ON u.id = s.user_id WHERE s.user_id = ? ORDER BY s.created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.SupportMessage
+	for rows.Next() {
+		var msg models.SupportMessage
+		if err := rows.Scan(&msg.ID, &msg.UserID, &msg.UserName, &msg.Subject, &msg.Body, &msg.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, msg)
+	}
+	return out, rows.Err()
 }

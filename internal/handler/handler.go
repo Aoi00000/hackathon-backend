@@ -125,6 +125,10 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ShippingRegion = strings.TrimSpace(req.ShippingRegion)
 	req.ShippingAddress = strings.TrimSpace(req.ShippingAddress)
+	if req.ShippingRegion == "" || req.ShippingAddress == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "発送元地域とお届け先住所は必須です")
+		return
+	}
 	user, err := h.Users.UpdateProfile(r.Context(), userID, req)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "プロフィール更新に失敗しました")
@@ -192,6 +196,12 @@ func trimItemRequest(req *models.CreateItemRequest) {
 func validateItemRequest(req models.CreateItemRequest) error {
 	if req.Title == "" || req.Description == "" || req.Category == "" || req.ConditionText == "" || req.PriceYen <= 0 {
 		return fmt.Errorf("商品名、説明、カテゴリ、状態、1円以上の価格を入力してください")
+	}
+	if req.ShipFromRegion == "" {
+		return fmt.Errorf("発送元の地域を入力してください")
+	}
+	if req.DeliveryMethod == "" {
+		return fmt.Errorf("商品の受け渡し方法を選択してください")
 	}
 	if req.ShippingDays <= 0 {
 		return fmt.Errorf("発送までの日数は1日以上で入力してください")
@@ -286,13 +296,8 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "商品の取得に失敗しました")
 		return
 	}
-	if viewer := h.optionalUserID(r); viewer != nil && item.SellerID != *viewer {
-		blocked, _ := h.Users.AreBlocked(r.Context(), *viewer, item.SellerID)
-		if blocked {
-			httpx.WriteError(w, http.StatusForbidden, "ブロック関係にあるため商品を表示できません")
-			return
-		}
-	}
+	// 出品一覧ではブロック相手の商品を非表示にしますが、
+	// 購入履歴・出品履歴・通知からの遷移では、取引確認のため商品詳細を表示できるようにします。
 	httpx.WriteJSON(w, http.StatusOK, item)
 }
 
@@ -580,7 +585,7 @@ func (h *Handler) CreatePrivateMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "DM本文を入力してください")
 		return
 	}
-	msg, err := h.Messages.CreatePrivate(r.Context(), itemID, userID, req.ReceiverID, body)
+	msg, err := h.Messages.CreatePrivate(r.Context(), itemID, userID, req.ReceiverID, req.ParentMessageID, body)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -601,6 +606,27 @@ func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, data)
 }
+
+func (h *Handler) ReadNotification(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	trimmed := strings.TrimSuffix(r.URL.Path, "/read")
+	id, ok := parseIDFromPath(strings.TrimPrefix(trimmed, "/api/me/notifications/"), "")
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "通知IDが正しくありません")
+		return
+	}
+	n, err := h.Users.MarkNotificationRead(r.Context(), userID, id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "通知の確認に失敗しました")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, n)
+}
+
 func (h *Handler) ListSavedSearches(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -696,6 +722,20 @@ func (h *Handler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
+func (h *Handler) ListSupportMessages(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	data, err := h.Users.ListSupportMessages(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "運営DM履歴の取得に失敗しました")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, data)
+}
+
 func (h *Handler) SendSupportMessage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -707,12 +747,13 @@ func (h *Handler) SendSupportMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
 		return
 	}
+	subject := strings.TrimSpace(req.Subject)
 	body := strings.TrimSpace(req.Body)
 	if body == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "本文を入力してください")
 		return
 	}
-	msg, err := h.Users.SendSupportMessage(r.Context(), userID, body)
+	msg, err := h.Users.SendSupportMessage(r.Context(), userID, subject, body)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "運営への連絡に失敗しました")
 		return
@@ -730,7 +771,7 @@ func (h *Handler) Recommend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "おすすめ取得に失敗しました")
 		return
 	}
-	reason := "チェックリスト数や新着順をもとに、現在購入しやすい商品を優先して提示しています。"
+	reason := "同じC2Cマーケットでの閲覧・いいね・購入に近いシグナルを想定し、チェックリスト数、新着度、価格帯をもとに提示しています。"
 	if len(items) > 0 {
 		var b strings.Builder
 		for _, it := range items {
@@ -743,6 +784,156 @@ func (h *Handler) Recommend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, models.RecommendationResponse{Reason: reason, Items: items})
+}
+
+func categoryReviewHints(category string) []string {
+	// MerRecのようなC2C取引データで本格学習したモデルが未配置の場合でも、
+	// カテゴリごとに購入者がレビューで気にしやすい観点を返します。
+	// ml/merrec_recommender.py で作成したJSONモデルを将来読み込む場合も、
+	// この関数を差し替えればアプリ本体のUIは変更せずに済みます。
+	c := strings.TrimSpace(category)
+	switch {
+	case strings.Contains(c, "本") || strings.Contains(c, "教材"):
+		return []string{"版・年度が古くないか", "書き込みや折れ、付属解答の有無", "初学者向けか演習量が十分か"}
+	case strings.Contains(c, "ガジェット") || strings.Contains(c, "スマホ") || strings.Contains(c, "家電"):
+		return []string{"バッテリー劣化や動作確認", "対応端子・OS・付属品", "保証や初期化済みか"}
+	case strings.Contains(c, "音楽") || strings.Contains(c, "楽器"):
+		return []string{"動作確認、音出し確認", "傷・反り・消耗部品", "付属ケースやケーブルの有無"}
+	case strings.Contains(c, "食品"):
+		return []string{"賞味期限・保存状態", "未開封かどうか", "アレルギー表示や受け渡しタイミング"}
+	case strings.Contains(c, "ファッション"):
+		return []string{"サイズ感、実寸", "汚れ・ほつれ・着用回数", "色味が写真と近いか"}
+	default:
+		return []string{"実物写真が十分か", "傷・汚れ・欠品の有無", "受け渡し方法と発送までの日数"}
+	}
+}
+
+func splitBullets(text string, section string) []string {
+	lines := strings.Split(text, "\n")
+	out := []string{}
+	active := false
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, section) {
+			active = true
+			continue
+		}
+		if active && (strings.Contains(line, "不安点") || strings.Contains(line, "質問候補") || strings.Contains(line, "不整合")) {
+			break
+		}
+		if active {
+			out = append(out, line)
+		}
+	}
+	if len(out) > 3 {
+		return out[:3]
+	}
+	return out
+}
+
+func heuristicItemAnalysis(item models.Item, priceInsight string) models.ItemAIAnalysisResponse {
+	risks := []string{}
+	questions := []string{}
+	inconsistencies := []string{}
+	text := strings.ToLower(item.Title + " " + item.Description + " " + item.ConditionText + " " + item.Tags)
+	if strings.Contains(item.ConditionText, "傷") || strings.Contains(item.ConditionText, "汚れ") || strings.Contains(text, "傷") || strings.Contains(text, "汚れ") {
+		risks = append(risks, "傷や汚れの程度が購入判断に影響しそうです。")
+		questions = append(questions, "傷や汚れが分かる写真を追加できますか？")
+	}
+	if item.ImageURL == "" {
+		risks = append(risks, "商品画像がないため、実物状態を確認しにくいです。")
+		questions = append(questions, "実物写真を追加してもらえますか？")
+	}
+	if item.Size == "" {
+		questions = append(questions, "サイズ感や実寸を教えてもらえますか？")
+	}
+	if item.ShippingDays >= 7 {
+		risks = append(risks, "発送までにやや時間がかかる可能性があります。")
+	}
+	if strings.Contains(item.Category, "本") && (strings.Contains(text, "服") || strings.Contains(text, "靴")) {
+		inconsistencies = append(inconsistencies, "カテゴリは本・教材ですが、説明に衣類らしい語が含まれています。")
+	}
+	if strings.Contains(item.Category, "食品") && !strings.Contains(text, "賞味") && !strings.Contains(text, "期限") {
+		questions = append(questions, "賞味期限や保存状態を教えてもらえますか？")
+	}
+	if len(risks) == 0 {
+		risks = append(risks, "大きな不安点は見当たりませんが、実物状態と受け渡し条件を確認すると安心です。")
+	}
+	if len(questions) == 0 {
+		questions = append(questions, "購入前に、状態・付属品・受け渡し方法について確認できますか？")
+	}
+	if len(inconsistencies) == 0 {
+		inconsistencies = append(inconsistencies, "大きな不整合は見当たりません。")
+	}
+	return models.ItemAIAnalysisResponse{RiskPoints: risks, SuggestedQuestions: questions, Inconsistencies: inconsistencies, PriceInsight: priceInsight, CategoryReviewHints: categoryReviewHints(item.Category)}
+}
+
+func (h *Handler) CategoryKnowledge(w http.ResponseWriter, r *http.Request) {
+	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	httpx.WriteJSON(w, http.StatusOK, models.CategoryKnowledgeResponse{Category: category, Tips: categoryReviewHints(category)})
+}
+
+func (h *Handler) TranslateText(w http.ResponseWriter, r *http.Request) {
+	var req models.AITranslateRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: ""})
+		return
+	}
+	translated, err := h.AI.GenerateText(ai.BuildTranslatePrompt(text))
+	if err != nil {
+		log.Printf("ai translate failed: %v", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "翻訳に失敗しました: "+err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: translated})
+}
+
+func (h *Handler) AnalyzeItem(w http.ResponseWriter, r *http.Request) {
+	itemID, ok := parseIDFromPath(strings.TrimSuffix(r.URL.Path, "/analysis"), "/api/items/")
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
+		return
+	}
+	item, err := h.Items.FindByID(r.Context(), itemID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "商品が見つかりません")
+		return
+	}
+	count, minPrice, maxPrice, avgPrice, _ := h.Items.SimilarPriceStats(r.Context(), item.Category, item.ID)
+	priceInsight := "同カテゴリの比較対象が少ないため、価格妥当性は商品状態と付属品で確認してください。"
+	if count > 0 {
+		if float64(item.PriceYen) > avgPrice*1.25 {
+			priceInsight = fmt.Sprintf("同カテゴリ%d件の平均価格は約%d円です。現在価格はやや高めなので、状態・付属品・希少性を確認すると安心です。", count, int(avgPrice))
+		} else if float64(item.PriceYen) < avgPrice*0.75 {
+			priceInsight = fmt.Sprintf("同カテゴリ%d件の平均価格は約%d円です。現在価格は低めなので、状態や欠品の有無を確認すると安心です。", count, int(avgPrice))
+		} else {
+			priceInsight = fmt.Sprintf("同カテゴリ%d件の価格帯は%d〜%d円、平均は約%d円です。現在価格は大きく外れていません。", count, minPrice, maxPrice, int(avgPrice))
+		}
+	}
+	analysis := heuristicItemAnalysis(item, priceInsight)
+	prompt := ai.BuildItemAnalysisPrompt(item.Title, item.Description, item.Category, item.ConditionText, item.PriceYen, priceInsight, strings.Join(analysis.CategoryReviewHints, " / "))
+	if text, err := h.AI.GenerateText(prompt); err == nil {
+		if v := splitBullets(text, "不安点"); len(v) > 0 {
+			analysis.RiskPoints = v
+		}
+		if v := splitBullets(text, "質問候補"); len(v) > 0 {
+			analysis.SuggestedQuestions = v
+		}
+		if v := splitBullets(text, "不整合"); len(v) > 0 {
+			analysis.Inconsistencies = v
+		}
+	} else {
+		log.Printf("ai item analysis fallback used: %v", err)
+	}
+	httpx.WriteJSON(w, http.StatusOK, analysis)
 }
 
 func parseIDFromPath(path string, prefix string) (int64, bool) {

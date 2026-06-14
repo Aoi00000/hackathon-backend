@@ -107,12 +107,15 @@ func (r *MessageRepository) FindByID(ctx context.Context, id int64) (models.Mess
 
 func (r *MessageRepository) ListPrivateByItem(ctx context.Context, itemID, userID int64) ([]models.PrivateMessage, error) {
 	rows, err := r.DB.QueryContext(ctx,
-		`SELECT p.id, p.item_id, p.sender_id, su.name, p.receiver_id, ru.name, p.body, p.created_at
+		`SELECT p.id, p.item_id, p.parent_private_message_id, p.sender_id, su.name, p.receiver_id, ru.name, p.body, p.created_at
          FROM private_messages p
          JOIN users su ON su.id = p.sender_id
          JOIN users ru ON ru.id = p.receiver_id
+         LEFT JOIN private_messages parent ON parent.id = p.parent_private_message_id
          WHERE p.item_id = ? AND (p.sender_id = ? OR p.receiver_id = ?)
-         ORDER BY p.created_at ASC`, itemID, userID, userID)
+         ORDER BY COALESCE(parent.created_at, p.created_at) DESC,
+                  CASE WHEN p.parent_private_message_id IS NULL THEN 0 ELSE 1 END ASC,
+                  p.created_at ASC`, itemID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,15 +123,20 @@ func (r *MessageRepository) ListPrivateByItem(ctx context.Context, itemID, userI
 	var out []models.PrivateMessage
 	for rows.Next() {
 		var m models.PrivateMessage
-		if err := rows.Scan(&m.ID, &m.ItemID, &m.SenderID, &m.SenderName, &m.ReceiverID, &m.ReceiverName, &m.Body, &m.CreatedAt); err != nil {
+		var parentID sql.NullInt64
+		if err := rows.Scan(&m.ID, &m.ItemID, &parentID, &m.SenderID, &m.SenderName, &m.ReceiverID, &m.ReceiverName, &m.Body, &m.CreatedAt); err != nil {
 			return nil, err
+		}
+		if parentID.Valid {
+			v := parentID.Int64
+			m.ParentPrivateMessageID = &v
 		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
 }
 
-func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID, receiverID int64, body string) (models.PrivateMessage, error) {
+func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID, receiverID int64, parentMessageID *int64, body string) (models.PrivateMessage, error) {
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return models.PrivateMessage{}, err
@@ -137,6 +145,25 @@ func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID,
 	var sellerID int64
 	if err := tx.QueryRowContext(ctx, `SELECT seller_id FROM items WHERE id=?`, itemID).Scan(&sellerID); err != nil {
 		return models.PrivateMessage{}, err
+	}
+	if parentMessageID != nil {
+		var parentItemID, parentSenderID, parentReceiverID int64
+		if err := tx.QueryRowContext(ctx, `SELECT item_id, sender_id, receiver_id FROM private_messages WHERE id=?`, *parentMessageID).Scan(&parentItemID, &parentSenderID, &parentReceiverID); err != nil {
+			return models.PrivateMessage{}, err
+		}
+		if parentItemID != itemID {
+			return models.PrivateMessage{}, fmt.Errorf("返信先DMが商品と一致しません")
+		}
+		if senderID != parentSenderID && senderID != parentReceiverID {
+			return models.PrivateMessage{}, fmt.Errorf("このDMスレッドには返信できません")
+		}
+		if receiverID == 0 {
+			if senderID == parentSenderID {
+				receiverID = parentReceiverID
+			} else {
+				receiverID = parentSenderID
+			}
+		}
 	}
 	if receiverID == 0 {
 		receiverID = sellerID
@@ -151,7 +178,7 @@ func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID,
 	if blocked > 0 {
 		return models.PrivateMessage{}, fmt.Errorf("ブロック関係にあるためDMできません")
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO private_messages (item_id,sender_id,receiver_id,body) VALUES (?,?,?,?)`, itemID, senderID, receiverID, body)
+	result, err := tx.ExecContext(ctx, `INSERT INTO private_messages (item_id,parent_private_message_id,sender_id,receiver_id,body) VALUES (?,?,?,?,?)`, itemID, parentMessageID, senderID, receiverID, body)
 	if err != nil {
 		return models.PrivateMessage{}, err
 	}
@@ -168,6 +195,11 @@ func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID,
 
 func (r *MessageRepository) FindPrivateByID(ctx context.Context, id int64) (models.PrivateMessage, error) {
 	var m models.PrivateMessage
-	err := r.DB.QueryRowContext(ctx, `SELECT p.id,p.item_id,p.sender_id,su.name,p.receiver_id,ru.name,p.body,p.created_at FROM private_messages p JOIN users su ON su.id=p.sender_id JOIN users ru ON ru.id=p.receiver_id WHERE p.id=?`, id).Scan(&m.ID, &m.ItemID, &m.SenderID, &m.SenderName, &m.ReceiverID, &m.ReceiverName, &m.Body, &m.CreatedAt)
+	var parentID sql.NullInt64
+	err := r.DB.QueryRowContext(ctx, `SELECT p.id,p.item_id,p.parent_private_message_id,p.sender_id,su.name,p.receiver_id,ru.name,p.body,p.created_at FROM private_messages p JOIN users su ON su.id=p.sender_id JOIN users ru ON ru.id=p.receiver_id WHERE p.id=?`, id).Scan(&m.ID, &m.ItemID, &parentID, &m.SenderID, &m.SenderName, &m.ReceiverID, &m.ReceiverName, &m.Body, &m.CreatedAt)
+	if parentID.Valid {
+		v := parentID.Int64
+		m.ParentPrivateMessageID = &v
+	}
 	return m, err
 }

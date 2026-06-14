@@ -33,6 +33,8 @@ func main() {
 	mux.HandleFunc("POST /api/auth/login", h.Login)
 	mux.HandleFunc("GET /api/items", h.ListItems)
 	mux.HandleFunc("POST /api/ai/generate-description", h.GenerateDescription)
+	mux.HandleFunc("POST /api/ai/translate", h.TranslateText)
+	mux.HandleFunc("GET /api/ai/category-knowledge", h.CategoryKnowledge)
 
 	mux.Handle("GET /api/me", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.Me)))
 	mux.Handle("PUT /api/me", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.UpdateMe)))
@@ -45,9 +47,18 @@ func main() {
 	mux.Handle("POST /api/me/saved-searches", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.SaveSearch)))
 	mux.Handle("GET /api/me/blocks", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListBlockedUsers)))
 	mux.Handle("POST /api/me/blocks", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.BlockUser)))
+	mux.Handle("GET /api/me/support-messages", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListSupportMessages)))
 	mux.Handle("POST /api/me/support-messages", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.SendSupportMessage)))
 	mux.Handle("GET /api/me/recommendations", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.Recommend)))
 	mux.Handle("POST /api/items", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CreateItem)))
+
+	mux.HandleFunc("/api/me/notifications/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read") {
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ReadNotification)).ServeHTTP(w, r)
+			return
+		}
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+	})
 
 	mux.HandleFunc("/api/me/saved-searches/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
@@ -81,6 +92,8 @@ func main() {
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.AddChecklist)).ServeHTTP(w, r)
 		case r.Method == http.MethodDelete && strings.HasSuffix(path, "/checklist"):
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.RemoveChecklist)).ServeHTTP(w, r)
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/analysis"):
+			h.AnalyzeItem(w, r)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/ask"):
 			h.AskItem(w, r)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/messages"):

@@ -211,3 +211,40 @@ func BuildRecommendationPrompt(userName string, itemsSummary string) string {
 
 上記の商品群について、購入検討の観点からおすすめ理由を120字以内で日本語でまとめてください。`, userName, itemsSummary)
 }
+
+func BuildTranslatePrompt(text string) string {
+	return fmt.Sprintf(`次の日本語UIテキストを、フリマアプリの画面表示として自然な英語へ翻訳してください。
+条件:
+- 意味を変えない
+- 商品名や固有名詞はできるだけ保持する
+- 出力は英訳本文だけにする
+- JSONや箇条書きの説明は不要
+
+テキスト:
+%s`, text)
+}
+
+func BuildItemAnalysisPrompt(title, description, category, conditionText string, priceYen int, priceInsight string, categoryHints string) string {
+	return fmt.Sprintf(`あなたはフリマアプリの購入前チェックを行うAIアシスタントです。
+以下の商品情報を読み、購入者の不安を減らすために、次の3項目を日本語で簡潔に出してください。
+
+1. 不安点: 最大3件
+2. 購入者が出品者に質問すべきこと: 最大3件
+3. 出品文・カテゴリ・状態などの不整合疑い: 最大3件。なければ「大きな不整合は見当たりません」とする
+
+商品名: %s
+カテゴリ: %s
+状態: %s
+価格: %d円
+商品説明: %s
+価格比較メモ: %s
+カテゴリ別レビュー知識: %s
+
+出力形式:
+不安点:
+- ...
+質問候補:
+- ...
+不整合:
+- ...`, title, category, conditionText, priceYen, description, priceInsight, categoryHints)
+}

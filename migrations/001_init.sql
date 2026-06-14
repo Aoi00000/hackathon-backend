@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS items (
   category VARCHAR(80) NOT NULL,
   condition_text VARCHAR(80) NOT NULL,
   price_yen INT NOT NULL,
-  image_url TEXT NULL,
+  image_url MEDIUMTEXT NULL,
   delivery_method VARCHAR(120) NOT NULL DEFAULT '対面・配送相談',
   shipping_days INT NOT NULL DEFAULT 2,
   ship_from_region VARCHAR(80) NOT NULL DEFAULT '未設定',
@@ -87,14 +87,17 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS private_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   item_id BIGINT NOT NULL,
+  parent_private_message_id BIGINT NULL,
   sender_id BIGINT NOT NULL,
   receiver_id BIGINT NOT NULL,
   body TEXT NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_private_messages_item FOREIGN KEY (item_id) REFERENCES items(id),
+  CONSTRAINT fk_private_messages_parent FOREIGN KEY (parent_private_message_id) REFERENCES private_messages(id) ON DELETE CASCADE,
   CONSTRAINT fk_private_messages_sender FOREIGN KEY (sender_id) REFERENCES users(id),
   CONSTRAINT fk_private_messages_receiver FOREIGN KEY (receiver_id) REFERENCES users(id),
   INDEX idx_private_messages_item_users (item_id, sender_id, receiver_id),
+  INDEX idx_private_messages_parent (parent_private_message_id),
   INDEX idx_private_messages_receiver_created_at (receiver_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -146,6 +149,7 @@ CREATE TABLE IF NOT EXISTS blocked_users (
 CREATE TABLE IF NOT EXISTS support_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
+  subject VARCHAR(120) NOT NULL DEFAULT '一般相談',
   body TEXT NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_support_messages_user FOREIGN KEY (user_id) REFERENCES users(id),

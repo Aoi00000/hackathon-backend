@@ -97,6 +97,8 @@ type PurchaseHistory struct {
 	ShippingDeadline    time.Time  `json:"shippingDeadline"`
 	ShippedAt           *time.Time `json:"shippedAt,omitempty"`
 	CompletedAt         *time.Time `json:"completedAt,omitempty"`
+	Rating              *int       `json:"rating,omitempty"`
+	RatingComment       string     `json:"ratingComment,omitempty"`
 }
 
 // Message は公開コメント欄の1投稿に対応する構造体です。
@@ -117,14 +119,15 @@ type Message struct {
 
 // PrivateMessage は購入検討者と出品者だけが見られる非公開DMです。
 type PrivateMessage struct {
-	ID           int64     `json:"id"`
-	ItemID       int64     `json:"itemId"`
-	SenderID     int64     `json:"senderId"`
-	SenderName   string    `json:"senderName"`
-	ReceiverID   int64     `json:"receiverId"`
-	ReceiverName string    `json:"receiverName"`
-	Body         string    `json:"body"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID                     int64     `json:"id"`
+	ItemID                 int64     `json:"itemId"`
+	ParentPrivateMessageID *int64    `json:"parentMessageId,omitempty"`
+	SenderID               int64     `json:"senderId"`
+	SenderName             string    `json:"senderName"`
+	ReceiverID             int64     `json:"receiverId"`
+	ReceiverName           string    `json:"receiverName"`
+	Body                   string    `json:"body"`
+	CreatedAt              time.Time `json:"createdAt"`
 }
 
 // Notification はユーザーへの簡易通知です。
@@ -161,6 +164,7 @@ type SupportMessage struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"userId"`
 	UserName  string    `json:"userName"`
+	Subject   string    `json:"subject"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"createdAt"`
 }
@@ -238,6 +242,29 @@ type AITextResponse struct {
 	Text string `json:"text"`
 }
 
+// AITranslateRequest は、UIの英語表示切り替えでユーザー入力テキストを英訳するためのリクエストです。
+// 日本語に戻すときは再翻訳せず、フロントエンド側で元の日本語テキストを表示します。
+type AITranslateRequest struct {
+	Text string `json:"text"`
+}
+
+// ItemAIAnalysisResponse は、商品詳細で購入前の不安点・質問候補・カテゴリ不整合・価格感を返すレスポンスです。
+// Geminiが利用できない場合でも、バックエンドのルールベース解析で最低限の結果を返します。
+type ItemAIAnalysisResponse struct {
+	RiskPoints          []string `json:"riskPoints"`
+	SuggestedQuestions  []string `json:"suggestedQuestions"`
+	Inconsistencies     []string `json:"inconsistencies"`
+	PriceInsight        string   `json:"priceInsight"`
+	CategoryReviewHints []string `json:"categoryReviewHints"`
+}
+
+// CategoryKnowledgeResponse は、MerRec などのC2Cレコメンド知識から、
+// そのカテゴリで購入者が気にしやすい点を出品画面へ返すレスポンスです。
+type CategoryKnowledgeResponse struct {
+	Category string   `json:"category"`
+	Tips     []string `json:"tips"`
+}
+
 type CreateMessageRequest struct {
 	ParentMessageID *int64 `json:"parentMessageId,omitempty"`
 	Body            string `json:"body"`
@@ -245,8 +272,9 @@ type CreateMessageRequest struct {
 }
 
 type CreatePrivateMessageRequest struct {
-	Body       string `json:"body"`
-	ReceiverID int64  `json:"receiverId,omitempty"`
+	Body            string `json:"body"`
+	ReceiverID      int64  `json:"receiverId,omitempty"`
+	ParentMessageID *int64 `json:"parentMessageId,omitempty"`
 }
 
 type ChecklistStatus struct {
@@ -263,7 +291,8 @@ type BlockUserRequest struct {
 }
 
 type SupportMessageRequest struct {
-	Body string `json:"body"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
 }
 
 type ErrorResponse struct {
