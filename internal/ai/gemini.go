@@ -1,3 +1,7 @@
+// Package ai は、Gemini API / Vertex AI / ローカルフォールバックを隠蔽する層です。
+//
+// 画面側やHandler側がAIプロバイダの違いを意識しないよう、GenerateText だけを公開します。
+// Vertex AIの429や一時失敗に対しては短い指数バックオフを行い、失敗時はHandler側でローカル生成へ落とします。
 package ai
 
 import (

@@ -1,3 +1,7 @@
+// Package repository の user_repository は、ユーザー、通知、保存検索条件、ブロック、運営DMを扱います。
+//
+// マイページに表示する月次/累計の売上・利用額も、この層でDBから集計し、
+// フロントエンドが複雑な計算を持たなくてよいようにしています。
 package repository
 
 import (

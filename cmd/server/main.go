@@ -1,3 +1,8 @@
+// Package main は、AI Flea Market のGoバックエンドを起動するエントリポイントです。
+//
+// ここでは設定読み込み、DB接続、HTTPルーティング、認証ミドルウェアの接続を行います。
+// 実際の業務ロジックは handler / repository / ai パッケージへ分離し、
+// main はアプリ全体の配線だけに集中させています。
 package main
 
 import (
@@ -33,7 +38,6 @@ func main() {
 	mux.HandleFunc("POST /api/auth/login", h.Login)
 	mux.HandleFunc("GET /api/items", h.ListItems)
 	mux.HandleFunc("POST /api/ai/generate-description", h.GenerateDescription)
-	mux.HandleFunc("POST /api/ai/translate", h.TranslateText)
 	mux.HandleFunc("GET /api/ai/category-knowledge", h.CategoryKnowledge)
 	mux.HandleFunc("POST /api/ai/parse-search", h.ParseNaturalSearch)
 

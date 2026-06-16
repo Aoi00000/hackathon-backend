@@ -1,3 +1,6 @@
+// Package models は、DBとAPIレスポンスで共有するデータ構造を定義します。
+//
+// JSONタグはフロントエンドのTypeScript型と対応しているため、名前を変える場合は src/types.ts も合わせて確認してください。
 package models
 
 import "time"
@@ -239,7 +242,7 @@ type GenerateDescriptionRequest struct {
 }
 
 // NaturalSearchRequest は、商品一覧トップの自然言語検索で使うリクエストです。
-// 例: 「予算1万円以内で、使用感が少ない参考書を安い順に探して」
+// 例: 「参考書 300円 ~ 1500円」
 type NaturalSearchRequest struct {
 	Query string `json:"query"`
 }

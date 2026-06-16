@@ -25,7 +25,7 @@ func GenerateToken(userID int64, secret string) (string, error) {
 		// sub は「このトークンが誰を表すか」を意味する標準的なclaimです。
 		"sub": fmt.Sprintf("%d", userID),
 
-		// exp は有効期限です。ハッカソンでは7日程度にしておくと扱いやすいです。
+		// exp は有効期限です。ハッカソンでは7日程度にしておきます。
 		"exp": time.Now().Add(7 * 24 * time.Hour).Unix(),
 
 		// iat は発行時刻です。

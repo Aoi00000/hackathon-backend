@@ -1,3 +1,8 @@
+// Package handler は、HTTPリクエストを受け取り、入力検証、Repository呼び出し、レスポンス生成を行います。
+//
+// このファイルには、ハッカソンの主要機能である認証、商品、購入、コメント、通知、AI機能、自然言語検索が集約されています。
+// 大きいファイルではありますが、DB操作は repository へ、外部AI呼び出しは ai へ分離し、
+// Handler は「HTTP APIとして何を受け取り何を返すか」を中心に記述しています。
 package handler
 
 import (
@@ -972,8 +977,8 @@ JSON形式:
 }
 
 例:
-入力: 予算1万円以内で、使用感が少なくてきれいなものを安い順に並べて
-出力: {"q":"","category":"","condition":"新品・未使用,未使用に近い,目立った傷や汚れなし","status":"available","minPrice":"","maxPrice":"10000","tag":"","deliveryWithin":"","sort":"price_asc","explanation":"予算上限と状態の良さ、安い順という意図を検索条件にしました。"}
+入力: 参考書 300円 ~ 1500円
+出力: {"q":"参考書","category":"本・教材","condition":"","status":"available","minPrice":"300","maxPrice":"1500","tag":"","deliveryWithin":"","sort":"recommended","explanation":"参考書という商品種別と価格帯を検索条件にしました。"}
 
 ユーザー入力:
 %s`, query)
@@ -1003,12 +1008,24 @@ func parseNaturalSearchLocally(query string) models.NaturalSearchResponse {
 	lower := strings.ToLower(q)
 	res := models.NaturalSearchResponse{Status: "available", Sort: "recommended"}
 
-	// 価格条件を抽出します。例: 1万円以内, 10000円以下, 500円以上。
-	if max := extractMaxPriceFromJapanese(q); max > 0 {
-		res.MaxPrice = strconv.Itoa(max)
-	}
-	if min := extractMinPriceFromJapanese(q); min > 0 {
-		res.MinPrice = strconv.Itoa(min)
+	// 価格条件を抽出します。
+	// 例: 「1万円以内」では maxPrice=10000、
+	//     「500円以上」では minPrice=500、
+	//     「参考書 300円 ~ 1500円」では minPrice=300 / maxPrice=1500 にします。
+	if min, max := extractPriceRangeFromJapanese(q); min > 0 || max > 0 {
+		if min > 0 {
+			res.MinPrice = strconv.Itoa(min)
+		}
+		if max > 0 {
+			res.MaxPrice = strconv.Itoa(max)
+		}
+	} else {
+		if max := extractMaxPriceFromJapanese(q); max > 0 {
+			res.MaxPrice = strconv.Itoa(max)
+		}
+		if min := extractMinPriceFromJapanese(q); min > 0 {
+			res.MinPrice = strconv.Itoa(min)
+		}
 	}
 
 	// 並び替えを抽出します。
@@ -1101,6 +1118,32 @@ func normalizeNaturalSearchResponse(res models.NaturalSearchResponse) models.Nat
 	return res
 }
 
+func extractPriceRangeFromJapanese(text string) (int, int) {
+	// 日本語の自然言語検索では、「300円 ~ 1500円」「300円〜1500円」
+	// 「300-1500円」のように、範囲指定がさまざまな表記で入力されます。
+	// この関数では、範囲表記だけを先に拾い、最小価格と最大価格に分解します。
+	// 範囲が取れなかった場合は 0, 0 を返し、既存の「以内」「以上」処理に任せます。
+	patterns := []string{
+		`([0-9０-９,]+)\s*円?\s*(?:~|〜|－|-|から)\s*([0-9０-９,]+)\s*円`,
+		`([0-9０-９,]+)\s*円\s*(?:~|〜|－|-|から)\s*([0-9０-９,]+)`,
+	}
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		m := re.FindStringSubmatch(text)
+		if len(m) >= 3 {
+			left := japaneseNumberToInt(m[1])
+			right := japaneseNumberToInt(m[2])
+			if left > 0 && right > 0 {
+				if left <= right {
+					return left, right
+				}
+				return right, left
+			}
+		}
+	}
+	return 0, 0
+}
+
 func extractMaxPriceFromJapanese(text string) int {
 	patterns := []string{`([0-9０-９]+)\s*万\s*円?\s*(以内|以下|まで|未満)?`, `([0-9０-９,]+)\s*円\s*(以内|以下|まで|未満)`}
 	for _, pattern := range patterns {
@@ -1163,7 +1206,7 @@ func containsString(values []string, target string) bool {
 }
 
 func cleanupNaturalSearchKeyword(text string) string {
-	replacers := []string{"予算", "以内", "以下", "まで", "安い順", "高い順", "並べて", "探して", "検索", "使用感が少なくて", "使用感が少ない", "きれいな", "綺麗な", "もの", "商品", "ください", "して", "で", "を", "に", "が", "の"}
+	replacers := []string{"予算", "以内", "以下", "まで", "安い順", "高い順", "並べて", "探して", "検索", "使用感が少なくて", "使用感が少ない", "きれいな", "綺麗な", "もの", "商品", "ください", "して", "で", "を", "に", "が", "の", "~", "〜", "－", "-"}
 	cleaned := text
 	for _, word := range replacers {
 		cleaned = strings.ReplaceAll(cleaned, word, " ")
