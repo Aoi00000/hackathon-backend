@@ -378,7 +378,27 @@ func (r *ItemRepository) Update(ctx context.Context, itemID, sellerID int64, req
 }
 
 func (r *ItemRepository) Cancel(ctx context.Context, itemID, sellerID int64) (models.Item, error) {
-	result, err := r.DB.ExecContext(ctx, `UPDATE items SET status='canceled', updated_at=CURRENT_TIMESTAMP WHERE id=? AND seller_id=? AND status='available'`, itemID, sellerID)
+	// 出品キャンセルは、商品状態の変更と通知作成を一つのトランザクションで行います。
+	// 途中で失敗した場合に「商品だけキャンセルされ、通知が残らない」という中途半端な状態を避けます。
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return models.Item{}, err
+	}
+	defer tx.Rollback()
+
+	// 通知文に商品名を入れるため、更新前に対象商品をロックして取得します。
+	// FOR UPDATE により、同じ商品への同時キャンセルや購入処理との競合を防ぎます。
+	var title string
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT title, status FROM items WHERE id=? AND seller_id=? FOR UPDATE`, itemID, sellerID).Scan(&title, &status); err != nil {
+		return models.Item{}, err
+	}
+	if status != "available" {
+		return models.Item{}, fmt.Errorf("商品が見つからないか、キャンセルできない状態です")
+	}
+
+	// 商品をキャンセル済みにします。履歴や通知から確認できるよう、DELETEではなくstatus更新にします。
+	result, err := tx.ExecContext(ctx, `UPDATE items SET status='canceled', updated_at=CURRENT_TIMESTAMP WHERE id=? AND seller_id=? AND status='available'`, itemID, sellerID)
 	if err != nil {
 		return models.Item{}, err
 	}
@@ -389,6 +409,51 @@ func (r *ItemRepository) Cancel(ctx context.Context, itemID, sellerID int64) (mo
 	if affected == 0 {
 		return models.Item{}, fmt.Errorf("商品が見つからないか、キャンセルできない状態です")
 	}
+
+	// 出品者本人へキャンセル完了通知を作成します。
+	if _, err := tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, '出品キャンセル完了', ?)`, sellerID, itemID, title+" の出品をキャンセルしました"); err != nil {
+		return models.Item{}, err
+	}
+
+	// MySQLでは、同じトランザクション上で rows を開いたまま別のExecを行うと、
+	// ドライバが「invalid connection」を返すことがあります。
+	// そのため、まずチェックリスト登録者IDだけをすべて読み取り、rowsを閉じてから通知をINSERTします。
+	rows, err := tx.QueryContext(ctx, `SELECT user_id FROM checklist WHERE item_id=? AND user_id<>?`, itemID, sellerID)
+	if err != nil {
+		return models.Item{}, err
+	}
+	checklistUserIDs := []int64{}
+	for rows.Next() {
+		var uid int64
+		if err := rows.Scan(&uid); err != nil {
+			rows.Close()
+			return models.Item{}, err
+		}
+		checklistUserIDs = append(checklistUserIDs, uid)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return models.Item{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return models.Item{}, err
+	}
+
+	// 対象商品をチェックリストに入れていたユーザーへ通知します。
+	// 出品者本人は上で通知済みなので、重複しないようSQL側で除外済みです。
+	for _, uid := range checklistUserIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, 'チェックリスト商品の出品キャンセル', ?)`, uid, itemID, title+" は出品者によりキャンセルされました"); err != nil {
+			return models.Item{}, err
+		}
+	}
+
+	// ここまで成功したらコミットします。
+	if err := tx.Commit(); err != nil {
+		return models.Item{}, err
+	}
+
+	// コミット後に通常のDB接続で商品を再取得します。
+	// キャンセル済みの商品も出品履歴や通知から確認できるよう、FindByIDはstatusで除外しません。
 	return r.FindByID(ctx, itemID)
 }
 
@@ -579,7 +644,7 @@ func (r *ItemRepository) RemoveChecklist(ctx context.Context, userID, itemID int
 
 func (r *ItemRepository) Recommend(ctx context.Context, userID int64) ([]models.Item, error) {
 	items := []models.Item{}
-	rows, err := r.DB.QueryContext(ctx, itemSelect()+` WHERE i.status='available' AND i.seller_id<>? AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.blocker_id=? AND b.blocked_id=i.seller_id) OR (b.blocker_id=i.seller_id AND b.blocked_id=?)) ORDER BY checklist_count DESC, i.updated_at DESC LIMIT 6`, userID, userID, userID)
+	rows, err := r.DB.QueryContext(ctx, itemSelect()+` WHERE i.status='available' AND i.seller_id<>? AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.blocker_id=? AND b.blocked_id=i.seller_id) OR (b.blocker_id=i.seller_id AND b.blocked_id=?)) ORDER BY checklist_count DESC, i.updated_at DESC LIMIT 8`, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}

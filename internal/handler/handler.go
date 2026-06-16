@@ -2,10 +2,12 @@ package handler
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -467,13 +469,19 @@ func (h *Handler) GenerateDescription(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "AI生成には商品名、カテゴリ、状態が必要です")
 		return
 	}
-	text, err := h.AI.GenerateText(ai.BuildDescriptionPrompt(req.Title, req.Category, req.ConditionText, req.Keywords))
+	// 外部AIが利用枠不足や一時混雑で失敗しても、出品作業を止めないようにします。
+	// GenerateTextWithFallback は Gemini / Vertex AI が成功すればその結果を使い、
+	// 失敗時は商品情報からローカルの説明文を作って返します。
+	text, notice, usedFallback, err := h.AI.GenerateTextWithFallback(
+		ai.BuildDescriptionPrompt(req.Title, req.Category, req.ConditionText, req.Keywords),
+		func() string { return ai.FallbackDescription(req.Title, req.Category, req.ConditionText, req.Keywords) },
+	)
 	if err != nil {
 		log.Printf("ai generate description failed: %v", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "AIによる説明生成に失敗しました: "+err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text})
+	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text, Notice: notice, UsedFallback: usedFallback})
 }
 func (h *Handler) AskItem(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := parseIDFromPath(strings.TrimSuffix(r.URL.Path, "/ask"), "/api/items/")
@@ -496,13 +504,20 @@ func (h *Handler) AskItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "商品が見つかりません")
 		return
 	}
-	text, err := h.AI.GenerateText(ai.BuildItemQAPrompt(item.Title, item.Description, item.Category, item.ConditionText, req.Question))
+	// 外部AIが利用枠不足や一時混雑で失敗しても、購入相談の体験を止めないようにします。
+	// 商品説明に基づくローカル回答へフォールバックするため、デモ時にも安定して動きます。
+	text, notice, usedFallback, err := h.AI.GenerateTextWithFallback(
+		ai.BuildItemQAPrompt(item.Title, item.Description, item.Category, item.ConditionText, req.Question),
+		func() string {
+			return ai.FallbackItemQA(item.Title, item.Description, item.Category, item.ConditionText, req.Question)
+		},
+	)
 	if err != nil {
 		log.Printf("ai item qa failed: %v", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "AIによる回答生成に失敗しました: "+err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text})
+	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text, Notice: notice, UsedFallback: usedFallback})
 }
 
 func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
@@ -869,6 +884,299 @@ func heuristicItemAnalysis(item models.Item, priceInsight string) models.ItemAIA
 		inconsistencies = append(inconsistencies, "大きな不整合は見当たりません。")
 	}
 	return models.ItemAIAnalysisResponse{RiskPoints: risks, SuggestedQuestions: questions, Inconsistencies: inconsistencies, PriceInsight: priceInsight, CategoryReviewHints: categoryReviewHints(item.Category)}
+}
+
+// ParseNaturalSearch は、商品一覧トップの「生成AIを活用した自然言語検索」を処理します。
+// 役割は、ユーザーが普段の言葉で入力した検索意図を、既存の商品検索フォームと同じパラメータへ変換することです。
+// Gemini / Vertex AI が使える場合は外部AIで柔軟に解釈し、429や認証未設定のときはローカル規則で最低限動かします。
+func (h *Handler) ParseNaturalSearch(w http.ResponseWriter, r *http.Request) {
+	var req models.NaturalSearchRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
+		return
+	}
+	query := strings.TrimSpace(req.Query)
+	if query == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "自然言語検索の文章を入力してください")
+		return
+	}
+
+	// まずローカル規則で解釈しておきます。
+	// これにより、外部AIが混雑している場合でも検索機能としては必ず使えます。
+	fallback := parseNaturalSearchLocally(query)
+
+	// 外部AIには、既存のプルダウン候補と検索APIの項目名を明示し、JSONだけを返すように指示します。
+	// 返ってきたJSONが壊れている場合も、画面を止めずにfallbackを返します。
+	prompt := buildNaturalSearchPrompt(query)
+	text, err := h.AI.GenerateText(prompt)
+	if err != nil {
+		log.Printf("natural language search fallback used: %v", err)
+		fallback.Notice = "※外部AIが一時的に利用できないため、ローカル規則で検索条件を作成しました。"
+		fallback.UsedFallback = true
+		httpx.WriteJSON(w, http.StatusOK, fallback)
+		return
+	}
+
+	parsed, err := parseNaturalSearchJSON(text)
+	if err != nil {
+		log.Printf("natural language search json parse fallback used: %v; raw=%s", err, text)
+		fallback.Notice = "※AI応答のJSON解釈に失敗したため、ローカル規則で検索条件を作成しました。"
+		fallback.UsedFallback = true
+		httpx.WriteJSON(w, http.StatusOK, fallback)
+		return
+	}
+
+	parsed = normalizeNaturalSearchResponse(parsed)
+	if parsed.Sort == "" {
+		parsed.Sort = fallback.Sort
+	}
+	if parsed.Explanation == "" {
+		parsed.Explanation = "自然言語から検索条件を作成しました。"
+	}
+	httpx.WriteJSON(w, http.StatusOK, parsed)
+}
+
+// buildNaturalSearchPrompt は、自然言語検索の入力を検索パラメータJSONに変換するためのプロンプトを作ります。
+// フロントエンドのプルダウン候補と完全に対応する値だけを使わせることで、AIの出力揺れを抑えます。
+func buildNaturalSearchPrompt(query string) string {
+	return fmt.Sprintf(`あなたは日本語フリマアプリの商品検索アシスタントです。
+ユーザーの自然言語検索を、既存の商品検索フォームに入れるJSONへ変換してください。
+
+必ず次のJSONだけを返してください。説明文、Markdown、コードブロックは禁止です。
+空欄にしたい項目は空文字にしてください。
+
+使用できるカテゴリ:
+ファッション, 本・教材, ガジェット・家電, スマホ・PC周辺機器, 家具・インテリア, 日用品・生活雑貨, 美容・コスメ, スポーツ・アウトドア, ゲーム・ホビー, 音楽・楽器, チケット, ハンドメイド, 食品・飲料, その他
+
+使用できる状態:
+新品・未使用, 未使用に近い, 目立った傷や汚れなし, やや傷や汚れあり, 傷や汚れあり, 全体的に状態が悪い
+
+使用できるsort:
+recommended, new, price_asc, price_desc, checklist_desc
+
+使用できるdeliveryWithin:
+today, tomorrow, 3days, week, later
+
+JSON形式:
+{
+  "q": "検索キーワード",
+  "category": "カテゴリ。複数ならカンマ区切り",
+  "condition": "状態。複数ならカンマ区切り",
+  "status": "available か sold。通常は available",
+  "minPrice": "最低価格。数字だけ",
+  "maxPrice": "最高価格。数字だけ",
+  "tag": "タグ検索語",
+  "deliveryWithin": "発送までの日数条件",
+  "sort": "並び替え",
+  "explanation": "検索条件に変換した理由を日本語で60字以内"
+}
+
+例:
+入力: 予算1万円以内で、使用感が少なくてきれいなものを安い順に並べて
+出力: {"q":"","category":"","condition":"新品・未使用,未使用に近い,目立った傷や汚れなし","status":"available","minPrice":"","maxPrice":"10000","tag":"","deliveryWithin":"","sort":"price_asc","explanation":"予算上限と状態の良さ、安い順という意図を検索条件にしました。"}
+
+ユーザー入力:
+%s`, query)
+}
+
+// parseNaturalSearchJSON は、Gemini / Vertex AI から返ったテキストからJSON部分を取り出して構造体にします。
+// AIが誤って```json ... ```を付ける場合があるため、最初の{から最後の}までを抽出してからdecodeします。
+func parseNaturalSearchJSON(text string) (models.NaturalSearchResponse, error) {
+	text = strings.TrimSpace(text)
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start < 0 || end < start {
+		return models.NaturalSearchResponse{}, fmt.Errorf("json object not found")
+	}
+	jsonText := text[start : end+1]
+	var result models.NaturalSearchResponse
+	if err := json.Unmarshal([]byte(jsonText), &result); err != nil {
+		return models.NaturalSearchResponse{}, err
+	}
+	return result, nil
+}
+
+// parseNaturalSearchLocally は、外部AIが使えないときの簡易自然言語検索です。
+// 完全な自然言語理解ではありませんが、デモでよく使う「予算」「きれい」「安い順」などを確実に拾います。
+func parseNaturalSearchLocally(query string) models.NaturalSearchResponse {
+	q := strings.TrimSpace(query)
+	lower := strings.ToLower(q)
+	res := models.NaturalSearchResponse{Status: "available", Sort: "recommended"}
+
+	// 価格条件を抽出します。例: 1万円以内, 10000円以下, 500円以上。
+	if max := extractMaxPriceFromJapanese(q); max > 0 {
+		res.MaxPrice = strconv.Itoa(max)
+	}
+	if min := extractMinPriceFromJapanese(q); min > 0 {
+		res.MinPrice = strconv.Itoa(min)
+	}
+
+	// 並び替えを抽出します。
+	if strings.Contains(q, "安い順") || strings.Contains(q, "安く") || strings.Contains(q, "安いもの") {
+		res.Sort = "price_asc"
+	}
+	if strings.Contains(q, "高い順") || strings.Contains(q, "高いもの") {
+		res.Sort = "price_desc"
+	}
+	if strings.Contains(q, "新しい") || strings.Contains(q, "新着") {
+		res.Sort = "new"
+	}
+	if strings.Contains(q, "人気") || strings.Contains(q, "チェックリスト") || strings.Contains(q, "いいね") {
+		res.Sort = "checklist_desc"
+	}
+
+	// 商品状態を抽出します。
+	if strings.Contains(q, "新品") || strings.Contains(q, "未使用") {
+		res.Condition = "新品・未使用,未使用に近い"
+	}
+	if strings.Contains(q, "きれい") || strings.Contains(q, "綺麗") || strings.Contains(q, "使用感が少") || strings.Contains(q, "美品") {
+		res.Condition = joinNonEmpty(res.Condition, "未使用に近い,目立った傷や汚れなし")
+	}
+	if strings.Contains(q, "傷") || strings.Contains(q, "汚れ") {
+		res.Condition = joinNonEmpty(res.Condition, "やや傷や汚れあり,傷や汚れあり")
+	}
+
+	// カテゴリを抽出します。
+	categories := []string{}
+	addCategory := func(category string) {
+		if !containsString(categories, category) {
+			categories = append(categories, category)
+		}
+	}
+	switch {
+	case strings.Contains(q, "参考書") || strings.Contains(q, "教科書") || strings.Contains(q, "本") || strings.Contains(q, "教材") || strings.Contains(q, "数学") || strings.Contains(q, "英語"):
+		addCategory("本・教材")
+	case strings.Contains(q, "スマホ") || strings.Contains(q, "pc") || strings.Contains(lower, "usb") || strings.Contains(q, "イヤホン") || strings.Contains(q, "充電"):
+		addCategory("スマホ・PC周辺機器")
+	case strings.Contains(q, "家電") || strings.Contains(q, "ライト") || strings.Contains(q, "ガジェット"):
+		addCategory("ガジェット・家電")
+	case strings.Contains(q, "服") || strings.Contains(q, "パーカー") || strings.Contains(q, "シャツ") || strings.Contains(q, "ファッション"):
+		addCategory("ファッション")
+	case strings.Contains(q, "食品") || strings.Contains(q, "食べ物") || strings.Contains(q, "スープ") || strings.Contains(q, "玉ねぎ") || strings.Contains(q, "たまねぎ"):
+		addCategory("食品・飲料")
+	case strings.Contains(q, "家具") || strings.Contains(q, "インテリア") || strings.Contains(q, "植物"):
+		addCategory("家具・インテリア")
+	case strings.Contains(q, "ゲーム") || strings.Contains(q, "カード") || strings.Contains(q, "ホビー"):
+		addCategory("ゲーム・ホビー")
+	case strings.Contains(q, "音楽") || strings.Contains(q, "楽器") || strings.Contains(q, "ギター"):
+		addCategory("音楽・楽器")
+	}
+	res.Category = strings.Join(categories, ",")
+
+	// 発送までの日数を抽出します。
+	switch {
+	case strings.Contains(q, "今日") || strings.Contains(q, "本日"):
+		res.DeliveryWithin = "today"
+	case strings.Contains(q, "明日"):
+		res.DeliveryWithin = "tomorrow"
+	case strings.Contains(q, "3日") || strings.Contains(q, "三日"):
+		res.DeliveryWithin = "3days"
+	case strings.Contains(q, "1週間") || strings.Contains(q, "一週間"):
+		res.DeliveryWithin = "week"
+	}
+
+	// 余った語はキーワードとして利用します。カテゴリや価格語だけで絞れる場合は空でも構いません。
+	res.Q = cleanupNaturalSearchKeyword(q)
+	if res.Category != "" || res.Condition != "" || res.MaxPrice != "" || res.MinPrice != "" || res.Sort != "recommended" {
+		res.Explanation = "自然言語から価格・カテゴリ・状態・並び順を推定しました。"
+	} else {
+		res.Explanation = "入力文をキーワード検索として利用します。"
+	}
+	return normalizeNaturalSearchResponse(res)
+}
+
+func normalizeNaturalSearchResponse(res models.NaturalSearchResponse) models.NaturalSearchResponse {
+	res.Q = strings.TrimSpace(res.Q)
+	res.Category = strings.Trim(strings.TrimSpace(res.Category), ",")
+	res.Condition = strings.Trim(strings.TrimSpace(res.Condition), ",")
+	res.Status = strings.Trim(strings.TrimSpace(res.Status), ",")
+	res.MinPrice = digitsOnly(res.MinPrice)
+	res.MaxPrice = digitsOnly(res.MaxPrice)
+	res.Tag = strings.TrimSpace(res.Tag)
+	res.DeliveryWithin = strings.TrimSpace(res.DeliveryWithin)
+	res.Sort = strings.TrimSpace(res.Sort)
+	if res.Sort == "" {
+		res.Sort = "recommended"
+	}
+	return res
+}
+
+func extractMaxPriceFromJapanese(text string) int {
+	patterns := []string{`([0-9０-９]+)\s*万\s*円?\s*(以内|以下|まで|未満)?`, `([0-9０-９,]+)\s*円\s*(以内|以下|まで|未満)`}
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		m := re.FindStringSubmatch(text)
+		if len(m) >= 2 {
+			value := japaneseNumberToInt(m[1])
+			if strings.Contains(pattern, "万") {
+				value *= 10000
+			}
+			return value
+		}
+	}
+	return 0
+}
+
+func extractMinPriceFromJapanese(text string) int {
+	re := regexp.MustCompile(`([0-9０-９,]+)\s*円\s*(以上|から)`)
+	m := re.FindStringSubmatch(text)
+	if len(m) >= 2 {
+		return japaneseNumberToInt(m[1])
+	}
+	return 0
+}
+
+func japaneseNumberToInt(text string) int {
+	text = strings.NewReplacer("０", "0", "１", "1", "２", "2", "３", "3", "４", "4", "５", "5", "６", "6", "７", "7", "８", "8", "９", "9", ",", "").Replace(text)
+	value, _ := strconv.Atoi(digitsOnly(text))
+	return value
+}
+
+func digitsOnly(text string) string {
+	var b strings.Builder
+	for _, r := range text {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func joinNonEmpty(existing, add string) string {
+	parts := []string{}
+	for _, value := range strings.Split(existing+","+add, ",") {
+		value = strings.TrimSpace(value)
+		if value != "" && !containsString(parts, value) {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func cleanupNaturalSearchKeyword(text string) string {
+	replacers := []string{"予算", "以内", "以下", "まで", "安い順", "高い順", "並べて", "探して", "検索", "使用感が少なくて", "使用感が少ない", "きれいな", "綺麗な", "もの", "商品", "ください", "して", "で", "を", "に", "が", "の"}
+	cleaned := text
+	for _, word := range replacers {
+		cleaned = strings.ReplaceAll(cleaned, word, " ")
+	}
+	cleaned = regexp.MustCompile(`[0-9０-９,]+\s*(万円|万|円)`).ReplaceAllString(cleaned, " ")
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if cleaned == "で" || cleaned == "を" || cleaned == "に" || cleaned == "の" || cleaned == "が" {
+		return ""
+	}
+	if len([]rune(cleaned)) > 24 {
+		cleaned = string([]rune(cleaned)[:24])
+	}
+	return cleaned
 }
 
 func (h *Handler) CategoryKnowledge(w http.ResponseWriter, r *http.Request) {

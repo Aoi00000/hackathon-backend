@@ -35,6 +35,7 @@ func main() {
 	mux.HandleFunc("POST /api/ai/generate-description", h.GenerateDescription)
 	mux.HandleFunc("POST /api/ai/translate", h.TranslateText)
 	mux.HandleFunc("GET /api/ai/category-knowledge", h.CategoryKnowledge)
+	mux.HandleFunc("POST /api/ai/parse-search", h.ParseNaturalSearch)
 
 	mux.Handle("GET /api/me", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.Me)))
 	mux.Handle("PUT /api/me", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.UpdateMe)))

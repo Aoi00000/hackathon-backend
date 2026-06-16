@@ -39,9 +39,9 @@ func Load() (Config, error) {
 		MySQLDatabase:   os.Getenv("MYSQL_DATABASE"),
 		AIProvider:      getEnv("AI_PROVIDER", "ai_studio"),
 		GeminiAPIKey:    os.Getenv("GEMINI_API_KEY"),
-		GeminiModel:     getEnv("GEMINI_MODEL", "gemini-1.5-flash-002"),
+		GeminiModel:     getEnv("GEMINI_MODEL", "gemini-2.5-flash"),
 		GoogleProjectID: getEnv("GOOGLE_CLOUD_PROJECT", os.Getenv("PROJECT_ID")),
-		VertexLocation:  getEnv("VERTEX_LOCATION", "asia-northeast1"),
+		VertexLocation:  getEnv("VERTEX_LOCATION", "global"),
 	}
 
 	if cfg.JWTSecret == "" {
@@ -53,12 +53,10 @@ func Load() (Config, error) {
 	if cfg.AIProvider != "ai_studio" && cfg.AIProvider != "vertex" {
 		return Config{}, fmt.Errorf("AI_PROVIDER must be ai_studio or vertex")
 	}
-	if cfg.AIProvider == "ai_studio" && cfg.GeminiAPIKey == "" {
-		return Config{}, fmt.Errorf("GEMINI_API_KEY is required when AI_PROVIDER=ai_studio")
-	}
-	if cfg.AIProvider == "vertex" && cfg.GoogleProjectID == "" {
-		return Config{}, fmt.Errorf("GOOGLE_CLOUD_PROJECT or PROJECT_ID is required when AI_PROVIDER=vertex")
-	}
+	// AI関連の認証情報は必須にはしません。
+	// 未設定・利用枠不足・429の場合でも、AIエンドポイント側でローカルの簡易生成へ
+	// フォールバックさせることで、ハッカソンのデモ画面全体が止まらないようにします。
+	// 本格運用では .env に GEMINI_API_KEY または Vertex AI のPROJECT設定を入れてください。
 	return cfg, nil
 }
 

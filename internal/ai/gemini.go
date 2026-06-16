@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -29,10 +30,10 @@ func NewClient(provider, apiKey, model, projectID, location string) *Client {
 		provider = "ai_studio"
 	}
 	if model == "" {
-		model = "gemini-1.5-flash-002"
+		model = "gemini-2.5-flash"
 	}
 	if location == "" {
-		location = "asia-northeast1"
+		location = "global"
 	}
 	return &Client{
 		Provider:  provider,
@@ -73,10 +74,49 @@ func (c *Client) GenerateText(prompt string) (string, error) {
 	if strings.TrimSpace(prompt) == "" {
 		return "", fmt.Errorf("prompt is empty")
 	}
-	if c.Provider == "vertex" {
-		return c.generateTextWithVertex(prompt)
+
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			// Vertex AI / Gemini は、モデルやリージョンの共有処理容量が一時的に不足すると
+			// 429 ResourceExhausted を返すことがあります。
+			// その場合、即座にローカル生成へ落とすよりも、短い指数バックオフで数回だけ
+			// 再試行した方が外部AI成功率が上がります。
+			delay := time.Duration(500*(1<<(attempt-1))) * time.Millisecond
+			if delay > 5*time.Second {
+				delay = 5 * time.Second
+			}
+			time.Sleep(delay)
+		}
+
+		var text string
+		var err error
+		if c.Provider == "vertex" {
+			text, err = c.generateTextWithVertex(prompt)
+		} else {
+			text, err = c.generateTextWithAIStudio(prompt)
+		}
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		if !isRetryableAIError(err) {
+			break
+		}
 	}
-	return c.generateTextWithAIStudio(prompt)
+	return "", lastErr
+}
+
+func isRetryableAIError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "429") ||
+		strings.Contains(text, "resourceexhausted") ||
+		strings.Contains(text, "resource exhausted") ||
+		strings.Contains(text, "temporarily unavailable") ||
+		strings.Contains(text, "deadline exceeded")
 }
 
 // generateTextWithAIStudio はGoogle AI StudioのAPIキー方式です。
@@ -88,7 +128,7 @@ func (c *Client) generateTextWithAIStudio(prompt string) (string, error) {
 
 	model := strings.TrimSpace(c.Model)
 	if model == "" {
-		model = "gemini-1.5-flash-002"
+		model = "gemini-2.5-flash"
 	}
 
 	bodyBytes, err := json.Marshal(generateContentRequest{Contents: []content{{Parts: []part{{Text: prompt}}}}})
@@ -140,11 +180,11 @@ func (c *Client) generateTextWithVertex(prompt string) (string, error) {
 	}
 	location := strings.TrimSpace(c.Location)
 	if location == "" {
-		location = "asia-northeast1"
+		location = "global"
 	}
 	modelName := strings.TrimSpace(c.Model)
 	if modelName == "" {
-		modelName = "gemini-1.5-flash-002"
+		modelName = "gemini-2.5-flash"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -170,6 +210,60 @@ func (c *Client) generateTextWithVertex(prompt string) (string, error) {
 		parts = append(parts, fmt.Sprint(p))
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n")), nil
+}
+
+// GenerateTextWithFallback は、外部AIが使える場合は Gemini / Vertex AI の結果を返し、
+// 利用枠不足・429・認証未設定・一時障害などで失敗した場合は、
+// 画面操作自体を止めないためにローカルの簡易生成文を返します。
+//
+// このアプリでは「AIで商品説明を生成」「AIに商品について質問する」が
+// デモ中に必ず操作できることを重視します。
+// そのため、外部AIが落ちた場合でも、エラー画面ではなく
+// ルールベースの下書き・回答を返す設計にしています。
+func (c *Client) GenerateTextWithFallback(prompt string, fallback func() string) (string, string, bool, error) {
+	text, err := c.GenerateText(prompt)
+	if err == nil {
+		return text, "", false, nil
+	}
+	log.Printf("external AI generation failed; falling back to local generator: %v", err)
+	fallbackText := strings.TrimSpace(fallback())
+	if fallbackText == "" {
+		return "", "", false, err
+	}
+	// 注意文は本文へ混ぜません。
+	// 出品画面では商品説明欄にそのまま保存されるため、
+	// 本文へ混ぜると「ローカル生成で作成しました」という注意まで商品説明として登録されてしまいます。
+	// そこで、本文と注意文を分離してAPIレスポンス側で返します。
+	return fallbackText, "※外部AIの利用枠不足または一時的な混雑により、ローカルの簡易生成で作成しました。", true, nil
+}
+
+// FallbackDescription は、Gemini / Vertex AI が使えないときの説明文生成です。
+// 商品名・カテゴリ・状態・出品者メモだけから、購入者が確認しやすい自然な日本語を作ります。
+func FallbackDescription(title, category, conditionText, keywords string) string {
+	title = strings.TrimSpace(title)
+	category = strings.TrimSpace(category)
+	conditionText = strings.TrimSpace(conditionText)
+	keywords = strings.TrimSpace(keywords)
+	if keywords == "" {
+		keywords = "使用目的や状態を写真とあわせて確認してください"
+	}
+	return fmt.Sprintf("%sです。カテゴリは%sで、状態は「%s」です。%s。送料込みで出品しています。気になる点があれば、購入前にコメントまたはDMでご確認ください。", title, category, conditionText, keywords)
+}
+
+// FallbackItemQA は、Gemini / Vertex AI が使えないときの購入相談回答です。
+// 商品情報に書かれている範囲だけを根拠にし、分からない点は出品者確認へ誘導します。
+func FallbackItemQA(title, description, category, conditionText, question string) string {
+	parts := []string{
+		fmt.Sprintf("「%s」についての回答です。", strings.TrimSpace(title)),
+		fmt.Sprintf("カテゴリは%s、状態は「%s」と登録されています。", strings.TrimSpace(category), strings.TrimSpace(conditionText)),
+	}
+	if strings.TrimSpace(description) != "" {
+		parts = append(parts, "商品説明には次のように記載されています: "+strings.TrimSpace(description))
+	}
+	if strings.TrimSpace(question) != "" {
+		parts = append(parts, "ご質問の内容について、商品説明に明記されていない部分は出品者に確認してください。特にサイズ、付属品、傷や汚れ、動作確認、受け渡し方法は購入前に確認すると安心です。")
+	}
+	return strings.Join(parts, "\n")
 }
 
 func BuildDescriptionPrompt(title, category, conditionText, keywords string) string {

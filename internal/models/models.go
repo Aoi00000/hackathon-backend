@@ -6,18 +6,22 @@ import "time"
 // APIレスポンスでは password_hash を返さないよう、PasswordHashにはjsonタグを付けていません。
 // balanceCoins はアプリ内仮想通貨の利用可能残高、salesCoins は売上金です。
 type User struct {
-	ID               int64     `json:"id"`
-	Name             string    `json:"name"`
-	Email            string    `json:"email"`
-	PasswordHash     string    `json:"-"`
-	BalanceCoins     int       `json:"balanceCoins"`
-	SalesCoins       int       `json:"salesCoins"`
-	RatingAverage    float64   `json:"ratingAverage"`
-	RatingCount      int       `json:"ratingCount"`
-	TransactionCount int       `json:"transactionCount"`
-	ShippingRegion   string    `json:"shippingRegion"`
-	ShippingAddress  string    `json:"shippingAddress"`
-	CreatedAt        time.Time `json:"createdAt"`
+	ID                int64     `json:"id"`
+	Name              string    `json:"name"`
+	Email             string    `json:"email"`
+	PasswordHash      string    `json:"-"`
+	BalanceCoins      int       `json:"balanceCoins"`
+	SalesCoins        int       `json:"salesCoins"`
+	RatingAverage     float64   `json:"ratingAverage"`
+	RatingCount       int       `json:"ratingCount"`
+	TransactionCount  int       `json:"transactionCount"`
+	ShippingRegion    string    `json:"shippingRegion"`
+	ShippingAddress   string    `json:"shippingAddress"`
+	MonthlySpendCoins int       `json:"monthlySpendCoins"`
+	TotalSpendCoins   int       `json:"totalSpendCoins"`
+	MonthlySalesCoins int       `json:"monthlySalesCoins"`
+	TotalSalesCoins   int       `json:"totalSalesCoins"`
+	CreatedAt         time.Time `json:"createdAt"`
 }
 
 // Item は items テーブルの1行に対応する構造体です。
@@ -234,12 +238,39 @@ type GenerateDescriptionRequest struct {
 	Keywords      string `json:"keywords"`
 }
 
+// NaturalSearchRequest は、商品一覧トップの自然言語検索で使うリクエストです。
+// 例: 「予算1万円以内で、使用感が少ない参考書を安い順に探して」
+type NaturalSearchRequest struct {
+	Query string `json:"query"`
+}
+
+// NaturalSearchResponse は、自然言語を既存の商品検索パラメータへ変換した結果です。
+// フロントエンドはこの値をそのまま商品一覧の検索フォーム状態へ反映します。
+type NaturalSearchResponse struct {
+	Q              string `json:"q,omitempty"`
+	Category       string `json:"category,omitempty"`
+	Size           string `json:"size,omitempty"`
+	Color          string `json:"color,omitempty"`
+	Condition      string `json:"condition,omitempty"`
+	Status         string `json:"status,omitempty"`
+	MinPrice       string `json:"minPrice,omitempty"`
+	MaxPrice       string `json:"maxPrice,omitempty"`
+	Tag            string `json:"tag,omitempty"`
+	DeliveryWithin string `json:"deliveryWithin,omitempty"`
+	Sort           string `json:"sort,omitempty"`
+	Explanation    string `json:"explanation,omitempty"`
+	Notice         string `json:"notice,omitempty"`
+	UsedFallback   bool   `json:"usedFallback,omitempty"`
+}
+
 type AskItemRequest struct {
 	Question string `json:"question"`
 }
 
 type AITextResponse struct {
-	Text string `json:"text"`
+	Text         string `json:"text"`
+	Notice       string `json:"notice,omitempty"`
+	UsedFallback bool   `json:"usedFallback,omitempty"`
 }
 
 // AITranslateRequest は、UIの英語表示切り替えでユーザー入力テキストを英訳するためのリクエストです。

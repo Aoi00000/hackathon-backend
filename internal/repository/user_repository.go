@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"hackathon-backend/internal/models"
 )
@@ -12,6 +13,16 @@ import (
 // UserRepository は users とユーザー周辺テーブルへのDB操作を担当します。
 type UserRepository struct {
 	DB *sql.DB
+}
+
+// formatJPY は通知本文などのユーザー向け金額を "¥1,200" 形式に整える小さな補助関数です。
+// DB/API の内部名には coins が残っていますが、画面・通知では日本円風の表記に統一します。
+func formatJPY(amount int) string {
+	text := strconv.Itoa(amount)
+	for i := len(text) - 3; i > 0; i -= 3 {
+		text = text[:i] + "," + text[i:]
+	}
+	return text
 }
 
 func (r *UserRepository) Create(ctx context.Context, name, email, passwordHash string) (models.User, error) {
@@ -49,6 +60,10 @@ func scanUser(scanner interface{ Scan(dest ...any) error }) (models.User, error)
 		&user.TransactionCount,
 		&shippingRegion,
 		&shippingAddress,
+		&user.MonthlySpendCoins,
+		&user.TotalSpendCoins,
+		&user.MonthlySalesCoins,
+		&user.TotalSalesCoins,
 		&user.CreatedAt,
 	)
 	if ratingAverage.Valid {
@@ -63,13 +78,26 @@ func scanUser(scanner interface{ Scan(dest ...any) error }) (models.User, error)
 	return user, err
 }
 
+func userSelect(where string) string {
+	// 購入・売上の集計は purchases テーブルから毎回算出します。
+	// このアプリでは購入時点で出品者に売上金が加算されるため、
+	// status が canceled でない取引を利用額・売上額として数えます。
+	base := `SELECT u.id, u.name, u.email, u.password_hash, u.balance_coins, u.sales_coins,
+                CASE WHEN u.rating_count = 0 THEN 0 ELSE u.rating_sum / u.rating_count END AS rating_average,
+                u.rating_count, u.transaction_count, u.shipping_region, u.shipping_address,
+                COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.buyer_id = u.id AND p.status <> 'canceled' AND p.created_at >= DATE_FORMAT(CURRENT_DATE(), '%Y-%m-01')), 0) AS monthly_spend_coins,
+                COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.buyer_id = u.id AND p.status <> 'canceled'), 0) AS total_spend_coins,
+                COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.seller_id = u.id AND p.status <> 'canceled' AND p.created_at >= DATE_FORMAT(CURRENT_DATE(), '%Y-%m-01')), 0) AS monthly_sales_coins,
+                COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.seller_id = u.id AND p.status <> 'canceled'), 0) AS total_sales_coins,
+                u.created_at
+         FROM users u `
+	return base + where
+}
+
 func (r *UserRepository) FindByEmail(ctx context.Context, email string) (models.User, error) {
 	user, err := scanUser(r.DB.QueryRowContext(
 		ctx,
-		`SELECT id, name, email, password_hash, balance_coins, sales_coins,
-                CASE WHEN rating_count = 0 THEN 0 ELSE rating_sum / rating_count END AS rating_average,
-                rating_count, transaction_count, shipping_region, shipping_address, created_at
-         FROM users WHERE email = ?`,
+		userSelect(`WHERE u.email = ?`),
 		email,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -84,10 +112,7 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (models.
 func (r *UserRepository) FindByID(ctx context.Context, id int64) (models.User, error) {
 	user, err := scanUser(r.DB.QueryRowContext(
 		ctx,
-		`SELECT id, name, email, password_hash, balance_coins, sales_coins,
-                CASE WHEN rating_count = 0 THEN 0 ELSE rating_sum / rating_count END AS rating_average,
-                rating_count, transaction_count, shipping_region, shipping_address, created_at
-         FROM users WHERE id = ?`,
+		userSelect(`WHERE u.id = ?`),
 		id,
 	))
 	if err != nil {
@@ -108,7 +133,7 @@ func (r *UserRepository) Charge(ctx context.Context, userID int64, amount int) (
 		return models.User{}, err
 	}
 	// チャージはユーザーにとって重要な残高変動なので、通知一覧にも記録します。
-	_, _ = r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, NULL, 'チャージ完了', ?)`, userID, fmt.Sprintf("%dコインをチャージしました", amount))
+	_, _ = r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, NULL, 'チャージ完了', ?)`, userID, fmt.Sprintf("¥%sをチャージしました", formatJPY(amount)))
 	return r.FindByID(ctx, userID)
 }
 
