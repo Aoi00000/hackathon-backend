@@ -242,7 +242,7 @@ type GenerateDescriptionRequest struct {
 }
 
 // NaturalSearchRequest は、商品一覧トップの自然言語検索で使うリクエストです。
-// 例: 「参考書 300円 ~ 1500円」
+// 例: 「予算1万円以内で、使用感が少ない参考書を安い順に探して」
 type NaturalSearchRequest struct {
 	Query string `json:"query"`
 }
@@ -327,6 +327,42 @@ type BlockUserRequest struct {
 type SupportMessageRequest struct {
 	Subject string `json:"subject"`
 	Body    string `json:"body"`
+}
+
+// MonthlyMoneySummary はマイページの月別収支グラフに使う集計行です。
+type MonthlyMoneySummary struct {
+	Month    string `json:"month"`
+	SalesYen int    `json:"salesYen"`
+	SpendYen int    `json:"spendYen"`
+}
+
+// PaymentMethod はユーザーがマイページで登録する支払い方法です。
+// カード番号とセキュリティコードはデモ用途として保存しますが、APIレスポンスには下4桁と表示名だけ返します。
+// 実運用ではカード情報を直接保存せず、決済代行サービスのトークンだけを保存してください。
+type PaymentMethod struct {
+	ID          int64     `json:"id"`
+	UserID      int64     `json:"userId"`
+	Label       string    `json:"label"`
+	CardLast4   string    `json:"cardLast4"`
+	HolderName  string    `json:"holderName"`
+	ExpiryMonth int       `json:"expiryMonth"`
+	ExpiryYear  int       `json:"expiryYear"`
+	IsDefault   bool      `json:"isDefault"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type CreatePaymentMethodRequest struct {
+	Label        string `json:"label"`
+	CardNumber   string `json:"cardNumber"`
+	HolderName   string `json:"holderName"`
+	ExpiryMonth  int    `json:"expiryMonth"`
+	ExpiryYear   int    `json:"expiryYear"`
+	SecurityCode string `json:"securityCode"`
+	IsDefault    bool   `json:"isDefault"`
+}
+
+type AIChatRequest struct {
+	Message string `json:"message"`
 }
 
 type ErrorResponse struct {

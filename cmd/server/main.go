@@ -40,6 +40,7 @@ func main() {
 	mux.HandleFunc("POST /api/ai/generate-description", h.GenerateDescription)
 	mux.HandleFunc("GET /api/ai/category-knowledge", h.CategoryKnowledge)
 	mux.HandleFunc("POST /api/ai/parse-search", h.ParseNaturalSearch)
+	mux.HandleFunc("POST /api/ai/chat", h.AIChat)
 
 	mux.Handle("GET /api/me", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.Me)))
 	mux.Handle("PUT /api/me", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.UpdateMe)))
@@ -55,11 +56,26 @@ func main() {
 	mux.Handle("GET /api/me/support-messages", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListSupportMessages)))
 	mux.Handle("POST /api/me/support-messages", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.SendSupportMessage)))
 	mux.Handle("GET /api/me/recommendations", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.Recommend)))
+	mux.Handle("GET /api/me/monthly-money-summary", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListMonthlyMoneySummary)))
+	mux.Handle("GET /api/me/payment-methods", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListPaymentMethods)))
+	mux.Handle("POST /api/me/payment-methods", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CreatePaymentMethod)))
 	mux.Handle("POST /api/items", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CreateItem)))
 
 	mux.HandleFunc("/api/me/notifications/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read") {
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ReadNotification)).ServeHTTP(w, r)
+			return
+		}
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+	})
+
+	mux.HandleFunc("/api/me/payment-methods/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/default") {
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.SetDefaultPaymentMethod)).ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.DeletePaymentMethod)).ServeHTTP(w, r)
 			return
 		}
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -105,6 +121,8 @@ func main() {
 			h.ListMessages(w, r)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/messages"):
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CreateMessage)).ServeHTTP(w, r)
+		case r.Method == http.MethodDelete && strings.Contains(path, "/messages/"):
+			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.DeleteMessage)).ServeHTTP(w, r)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/private-messages"):
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListPrivateMessages)).ServeHTTP(w, r)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/private-messages"):

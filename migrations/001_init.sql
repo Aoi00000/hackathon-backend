@@ -162,6 +162,22 @@ CREATE TABLE IF NOT EXISTS support_messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 
+CREATE TABLE IF NOT EXISTS payment_methods (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  card_last4 CHAR(4) NOT NULL,
+  holder_name VARCHAR(120) NOT NULL,
+  expiry_month TINYINT NOT NULL,
+  expiry_year SMALLINT NOT NULL,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_payment_methods_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_payment_methods_user_default (user_id, is_default),
+  INDEX idx_payment_methods_user_created_at (user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
 -- ============================================================
 -- デモ用初期データ
 -- 4名のユーザーと20件の商品を初期投入します。

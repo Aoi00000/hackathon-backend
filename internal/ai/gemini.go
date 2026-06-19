@@ -346,3 +346,43 @@ func BuildItemAnalysisPrompt(title, description, category, conditionText string,
 不整合:
 - ...`, title, category, conditionText, priceYen, description, priceInsight, categoryHints)
 }
+
+func BuildGeneralChatPrompt(message string) string {
+	return fmt.Sprintf(`あなたは大学生向けフリマアプリ内の対話型AIです。
+ユーザーの相談に対して、一般的なGeminiのように自然で役立つ日本語で答えてください。
+フリマアプリ内の機能なので、回答の最後には、その相談に役立ちそうなおすすめグッズを一般名で3〜6個提示してください。
+商品の個別在庫を断定せず、「探してみるとよいもの」として一般名で出してください。
+
+条件:
+- 300字以内を目安にする
+- 必要なら箇条書きを使う
+- 危険・違法・医療断定などは避け、安全な範囲の提案にする
+- 最後に必ず「おすすめグッズ:」を付ける
+
+ユーザーの相談:
+%s`, message)
+}
+
+func FallbackGeneralChat(message string) string {
+	text := strings.ToLower(strings.TrimSpace(message))
+	var answer string
+	var goods []string
+	switch {
+	case strings.Contains(text, "休日") || strings.Contains(text, "遊び") || strings.Contains(text, "出かけ") || strings.Contains(text, "海") || strings.Contains(text, "山"):
+		answer = "気分転換をしたいなら、近場の公園散歩、海沿いの散策、山や川のある場所への小旅行などがおすすめです。予定を詰め込みすぎず、写真を撮る時間やカフェで休む時間を入れると、非日常感が出やすくなります。"
+		goods = []string{"日焼け止め", "歩きやすいサンダル", "リュック", "モバイルバッテリー", "折りたたみ傘"}
+	case strings.Contains(text, "模様替え") || strings.Contains(text, "部屋") || strings.Contains(text, "インテリア") || strings.Contains(text, "家具"):
+		answer = "大きな家具を変えなくても、カーテン、ベッドシーツ、照明、小物の色をそろえるだけで部屋の印象はかなり変わります。落ち着いた雰囲気なら青・水色・グレー、温かい雰囲気ならベージュ・木目・淡いオレンジが使いやすいです。"
+		goods = []string{"カーテン", "ベッドシーツ", "間接照明", "収納ボックス", "観葉植物"}
+	case strings.Contains(text, "勉強") || strings.Contains(text, "試験") || strings.Contains(text, "レポート") || strings.Contains(text, "集中"):
+		answer = "集中したいときは、作業時間を25〜50分に区切り、机の上から関係ないものを減らすのが効果的です。最初は難しい教材ではなく、今日終わらせる範囲が見えるタスクから始めると入りやすいです。"
+		goods = []string{"タイマー", "ノート", "参考書", "ブックスタンド", "ノイズキャンセリングイヤホン"}
+	case strings.Contains(text, "料理") || strings.Contains(text, "自炊") || strings.Contains(text, "キッチン"):
+		answer = "自炊を続けたいなら、最初は切る・焼く・保存するの手間を減らす道具をそろえるのがおすすめです。作り置きしやすいメニューから始めると、食費も時間も管理しやすくなります。"
+		goods = []string{"保存容器", "フライパン", "包丁", "まな板", "調味料ラック"}
+	default:
+		answer = "やりたいことを少し具体化して、準備・移動・片付けの手間が小さい形から試すのがおすすめです。まずは今日すぐできる小さな行動に分けると、気軽に始めやすくなります。"
+		goods = []string{"ノート", "トートバッグ", "モバイルバッテリー", "収納ケース", "小型ライト"}
+	}
+	return answer + "\n\nおすすめグッズ:\n- " + strings.Join(goods, "\n- ")
+}

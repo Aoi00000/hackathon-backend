@@ -1305,3 +1305,142 @@ func parseIDFromPath(path string, prefix string) (int64, bool) {
 	}
 	return id, true
 }
+
+func (h *Handler) ListMonthlyMoneySummary(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	data, err := h.Users.ListMonthlyMoneySummary(r.Context(), userID, 6)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "月別収支の取得に失敗しました")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, data)
+}
+
+func (h *Handler) ListPaymentMethods(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	data, err := h.Users.ListPaymentMethods(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "支払い方法の取得に失敗しました")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, data)
+}
+
+func (h *Handler) CreatePaymentMethod(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	var req models.CreatePaymentMethodRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
+		return
+	}
+	method, err := h.Users.CreatePaymentMethod(r.Context(), userID, req)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, method)
+}
+
+func (h *Handler) SetDefaultPaymentMethod(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	trimmed := strings.TrimSuffix(r.URL.Path, "/default")
+	id, ok := parseIDFromPath(strings.TrimPrefix(trimmed, "/api/me/payment-methods/"), "")
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "支払い方法IDが正しくありません")
+		return
+	}
+	if err := h.Users.SetDefaultPaymentMethod(r.Context(), userID, id); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) DeletePaymentMethod(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	id, ok := parseIDFromPath(strings.TrimPrefix(r.URL.Path, "/api/me/payment-methods/"), "")
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "支払い方法IDが正しくありません")
+		return
+	}
+	if err := h.Users.DeletePaymentMethod(r.Context(), userID, id); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func parseItemMessageIDs(path string) (int64, int64, bool) {
+	trimmed := strings.TrimPrefix(path, "/api/items/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 3 || parts[1] != "messages" {
+		return 0, 0, false
+	}
+	itemID, err1 := strconv.ParseInt(parts[0], 10, 64)
+	messageID, err2 := strconv.ParseInt(parts[2], 10, 64)
+	if err1 != nil || err2 != nil || itemID <= 0 || messageID <= 0 {
+		return 0, 0, false
+	}
+	return itemID, messageID, true
+}
+
+func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	itemID, messageID, ok := parseItemMessageIDs(r.URL.Path)
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "コメントIDが正しくありません")
+		return
+	}
+	if err := h.Messages.DeletePublicBySeller(r.Context(), itemID, messageID, userID); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) AIChat(w http.ResponseWriter, r *http.Request) {
+	var req models.AIChatRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
+		return
+	}
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "質問を入力してください")
+		return
+	}
+	text, notice, usedFallback, err := h.AI.GenerateTextWithFallback(
+		ai.BuildGeneralChatPrompt(message),
+		func() string { return ai.FallbackGeneralChat(message) },
+	)
+	if err != nil {
+		log.Printf("ai chat failed: %v", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "AI対話に失敗しました: "+err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text, Notice: notice, UsedFallback: usedFallback})
+}

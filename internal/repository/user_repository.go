@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"hackathon-backend/internal/models"
 )
@@ -132,6 +134,13 @@ func (r *UserRepository) Charge(ctx context.Context, userID int64, amount int) (
 	}
 	if amount > 1000000 {
 		return models.User{}, fmt.Errorf("一度にチャージできる上限を超えています")
+	}
+	hasDefault, err := r.HasDefaultPaymentMethod(ctx, userID)
+	if err != nil {
+		return models.User{}, err
+	}
+	if !hasDefault {
+		return models.User{}, fmt.Errorf("残高チャージには、使用する支払い方法を1つ以上登録し、既定に設定してください")
 	}
 	if _, err := r.DB.ExecContext(ctx, `UPDATE users SET balance_coins = balance_coins + ? WHERE id = ?`, amount, userID); err != nil {
 		return models.User{}, err
@@ -343,4 +352,187 @@ func (r *UserRepository) ListSupportMessages(ctx context.Context, userID int64) 
 		out = append(out, msg)
 	}
 	return out, rows.Err()
+}
+
+func maskCardNumber(cardNumber string) string {
+	cleaned := strings.NewReplacer(" ", "", "-", "").Replace(cardNumber)
+	if len(cleaned) < 4 {
+		return ""
+	}
+	return cleaned[len(cleaned)-4:]
+}
+
+func (r *UserRepository) ListMonthlyMoneySummary(ctx context.Context, userID int64, months int) ([]models.MonthlyMoneySummary, error) {
+	if months <= 0 || months > 24 {
+		months = 6
+	}
+	now := time.Now().UTC()
+	firstMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -(months - 1), 0)
+
+	// まず直近monthsか月の箱を0円で作っておきます。
+	// 取引がない月もグラフに出すことで、デモ時に「空白の月」が分かりやすくなります。
+	indexByMonth := map[string]int{}
+	out := make([]models.MonthlyMoneySummary, months)
+	for i := 0; i < months; i++ {
+		m := firstMonth.AddDate(0, i, 0).Format("2006-01")
+		out[i] = models.MonthlyMoneySummary{Month: m}
+		indexByMonth[m] = i
+	}
+
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym,
+		       SUM(CASE WHEN seller_id = ? THEN price_yen ELSE 0 END) AS sales_yen,
+		       SUM(CASE WHEN buyer_id = ? THEN price_yen ELSE 0 END) AS spend_yen
+		FROM purchases
+		WHERE status <> 'canceled'
+		  AND (seller_id = ? OR buyer_id = ?)
+		  AND created_at >= ?
+		GROUP BY ym
+		ORDER BY ym ASC`, userID, userID, userID, userID, firstMonth)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var month string
+		var sales, spend sql.NullInt64
+		if err := rows.Scan(&month, &sales, &spend); err != nil {
+			return nil, err
+		}
+		if idx, ok := indexByMonth[month]; ok {
+			if sales.Valid {
+				out[idx].SalesYen = int(sales.Int64)
+			}
+			if spend.Valid {
+				out[idx].SpendYen = int(spend.Int64)
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
+func (r *UserRepository) ListPaymentMethods(ctx context.Context, userID int64) ([]models.PaymentMethod, error) {
+	rows, err := r.DB.QueryContext(ctx, `SELECT id, user_id, label, card_last4, holder_name, expiry_month, expiry_year, is_default, created_at FROM payment_methods WHERE user_id = ? ORDER BY is_default DESC, created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.PaymentMethod{}
+	for rows.Next() {
+		var m models.PaymentMethod
+		var isDefault int
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Label, &m.CardLast4, &m.HolderName, &m.ExpiryMonth, &m.ExpiryYear, &isDefault, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		m.IsDefault = isDefault == 1
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (r *UserRepository) CreatePaymentMethod(ctx context.Context, userID int64, req models.CreatePaymentMethodRequest) (models.PaymentMethod, error) {
+	req.Label = strings.TrimSpace(req.Label)
+	req.HolderName = strings.TrimSpace(req.HolderName)
+	last4 := maskCardNumber(req.CardNumber)
+	securityCode := strings.TrimSpace(req.SecurityCode)
+	if req.Label == "" || req.HolderName == "" || last4 == "" || req.ExpiryMonth < 1 || req.ExpiryMonth > 12 || req.ExpiryYear < time.Now().Year()%100 || len(securityCode) < 3 {
+		return models.PaymentMethod{}, fmt.Errorf("登録名、カード番号、名義、有効期限、セキュリティコードを正しく入力してください")
+	}
+
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return models.PaymentMethod{}, err
+	}
+	defer tx.Rollback()
+
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_methods WHERE user_id = ?`, userID).Scan(&existing); err != nil {
+		return models.PaymentMethod{}, err
+	}
+	isDefault := req.IsDefault || existing == 0
+	if isDefault {
+		if _, err := tx.ExecContext(ctx, `UPDATE payment_methods SET is_default = 0 WHERE user_id = ?`, userID); err != nil {
+			return models.PaymentMethod{}, err
+		}
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO payment_methods (user_id, label, card_last4, holder_name, expiry_month, expiry_year, is_default) VALUES (?, ?, ?, ?, ?, ?, ?)`, userID, req.Label, last4, req.HolderName, req.ExpiryMonth, req.ExpiryYear, isDefault)
+	if err != nil {
+		return models.PaymentMethod{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return models.PaymentMethod{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.PaymentMethod{}, err
+	}
+	return r.FindPaymentMethod(ctx, userID, id)
+}
+
+func (r *UserRepository) FindPaymentMethod(ctx context.Context, userID, id int64) (models.PaymentMethod, error) {
+	var m models.PaymentMethod
+	var isDefault int
+	err := r.DB.QueryRowContext(ctx, `SELECT id, user_id, label, card_last4, holder_name, expiry_month, expiry_year, is_default, created_at FROM payment_methods WHERE id = ? AND user_id = ?`, id, userID).Scan(&m.ID, &m.UserID, &m.Label, &m.CardLast4, &m.HolderName, &m.ExpiryMonth, &m.ExpiryYear, &isDefault, &m.CreatedAt)
+	m.IsDefault = isDefault == 1
+	return m, err
+}
+
+func (r *UserRepository) SetDefaultPaymentMethod(ctx context.Context, userID, id int64) error {
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_methods WHERE id = ? AND user_id = ?`, id, userID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return fmt.Errorf("支払い方法が見つかりません")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_methods SET is_default = 0 WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payment_methods SET is_default = 1 WHERE id = ? AND user_id = ?`, id, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *UserRepository) DeletePaymentMethod(ctx context.Context, userID, id int64) error {
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var wasDefault int
+	if err := tx.QueryRowContext(ctx, `SELECT is_default FROM payment_methods WHERE id = ? AND user_id = ?`, id, userID).Scan(&wasDefault); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM payment_methods WHERE id = ? AND user_id = ?`, id, userID); err != nil {
+		return err
+	}
+	if wasDefault == 1 {
+		var nextID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM payment_methods WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, userID).Scan(&nextID)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE payment_methods SET is_default = 1 WHERE id = ? AND user_id = ?`, nextID, userID); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *UserRepository) HasDefaultPaymentMethod(ctx context.Context, userID int64) (bool, error) {
+	var exists int
+	err := r.DB.QueryRowContext(ctx, `SELECT 1 FROM payment_methods WHERE user_id = ? AND is_default = 1 LIMIT 1`, userID).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
 }

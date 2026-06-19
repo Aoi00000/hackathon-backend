@@ -203,3 +203,23 @@ func (r *MessageRepository) FindPrivateByID(ctx context.Context, id int64) (mode
 	}
 	return m, err
 }
+
+func (r *MessageRepository) DeletePublicBySeller(ctx context.Context, itemID, messageID, sellerID int64) error {
+	// 出品者だけが自分の商品についた公開コメントを削除できます。
+	// 親コメントを削除した場合、DBのON DELETE CASCADEにより返信もまとめて削除されます。
+	result, err := r.DB.ExecContext(ctx, `
+		DELETE m FROM messages m
+		JOIN items i ON i.id = m.item_id
+		WHERE m.id = ? AND m.item_id = ? AND i.seller_id = ?`, messageID, itemID, sellerID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("削除できるコメントが見つかりません")
+	}
+	return nil
+}
