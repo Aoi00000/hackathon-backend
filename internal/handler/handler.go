@@ -31,6 +31,7 @@ type Handler struct {
 	Users    repository.UserRepository
 	Items    repository.ItemRepository
 	Messages repository.MessageRepository
+	Chats    repository.AIChatRepository
 	AI       *ai.Client
 }
 
@@ -40,6 +41,7 @@ func New(cfg config.Config, database *sql.DB) *Handler {
 		Users:    repository.UserRepository{DB: database},
 		Items:    repository.ItemRepository{DB: database},
 		Messages: repository.MessageRepository{DB: database},
+		Chats:    repository.AIChatRepository{DB: database},
 		AI:       ai.NewClient(cfg.AIProvider, cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GoogleProjectID, cfg.VertexLocation),
 	}
 }
@@ -520,6 +522,65 @@ func (h *Handler) AskItem(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("ai item qa failed: %v", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "AIによる回答生成に失敗しました: "+err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text, Notice: notice, UsedFallback: usedFallback})
+}
+
+func (h *Handler) GenerateNegotiationAssist(w http.ResponseWriter, r *http.Request) {
+	// 価格交渉アシスタントは、商品詳細ページの「公開コメント」と「非公開DM」の間に配置するAI機能です。
+	// 値下げ交渉はC2C取引で感情的摩擦が起きやすいため、商品情報・希望金額・公開コメントの文脈から、
+	// 角が立ちにくい承諾/相談/お断りメッセージを生成します。
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	itemID, ok := parseIDFromPath(strings.TrimSuffix(r.URL.Path, "/negotiation-assist"), "/api/items/")
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
+		return
+	}
+	var req models.PriceNegotiationRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
+		return
+	}
+	if req.DesiredPriceYen <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "希望金額を1円以上で入力してください")
+		return
+	}
+	item, err := h.Items.FindByID(r.Context(), itemID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "商品が見つかりません")
+		return
+	}
+	role := "buyer"
+	roleLabel := "購入検討者"
+	if item.SellerID == userID {
+		role = "seller"
+		roleLabel = "出品者"
+	}
+	commentsSummary := "公開コメントはまだありません。"
+	if publicMessages, err := h.Messages.ListByItem(r.Context(), itemID); err == nil && len(publicMessages) > 0 {
+		parts := make([]string, 0, len(publicMessages))
+		for i, message := range publicMessages {
+			// AIへ渡す文脈は長くなりすぎないよう、最新ではなく取得順の先頭から最大5件に制限します。
+			// 公開コメントには価格交渉の雰囲気や既出質問が含まれるため、短い要約でも文面の自然さが上がります。
+			if i >= 5 {
+				break
+			}
+			parts = append(parts, fmt.Sprintf("%s: %s", message.SenderName, message.Body))
+		}
+		commentsSummary = strings.Join(parts, " / ")
+	}
+	prompt := ai.BuildNegotiationPrompt(item.Title, item.Description, item.Category, item.ConditionText, item.PriceYen, req.DesiredPriceYen, roleLabel, commentsSummary)
+	text, notice, usedFallback, err := h.AI.GenerateTextWithFallback(prompt, func() string {
+		return ai.FallbackNegotiation(item.Title, item.PriceYen, req.DesiredPriceYen, role)
+	})
+	if err != nil {
+		log.Printf("ai negotiation assist failed: %v", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "価格交渉メッセージの生成に失敗しました: "+err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text, Notice: notice, UsedFallback: usedFallback})
@@ -1227,26 +1288,6 @@ func (h *Handler) CategoryKnowledge(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, models.CategoryKnowledgeResponse{Category: category, Tips: categoryReviewHints(category)})
 }
 
-func (h *Handler) TranslateText(w http.ResponseWriter, r *http.Request) {
-	var req models.AITranslateRequest
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
-		return
-	}
-	text := strings.TrimSpace(req.Text)
-	if text == "" {
-		httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: ""})
-		return
-	}
-	translated, err := h.AI.GenerateText(ai.BuildTranslatePrompt(text))
-	if err != nil {
-		log.Printf("ai translate failed: %v", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "翻訳に失敗しました: "+err.Error())
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: translated})
-}
-
 func (h *Handler) AnalyzeItem(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := parseIDFromPath(strings.TrimSuffix(r.URL.Path, "/analysis"), "/api/items/")
 	if !ok {
@@ -1422,6 +1463,177 @@ func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// ListAIChatThreads は、ログインユーザーが過去に作成したAI対話スレッド一覧を返します。
+// AI対話ページ左側のスレッドリストで使い、話題ごとに会話を再開できるようにします。
+func (h *Handler) ListAIChatThreads(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	threads, err := h.Chats.ListThreads(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "AI対話スレッドの取得に失敗しました")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, threads)
+}
+
+// CreateAIChatThread は、空のAI対話スレッドを作成します。
+// ユーザーが明示的に「新しい話題」を押した場合に使います。
+func (h *Handler) CreateAIChatThread(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	var req models.CreateAIChatThreadRequest
+	_ = httpx.DecodeJSON(r, &req)
+	thread, err := h.Chats.CreateThread(r.Context(), userID, req.Title)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "AI対話スレッドの作成に失敗しました")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, thread)
+}
+
+// DeleteAIChatThread は、不要になったAI対話スレッドを履歴から削除します。
+// DBの外部キーにより、スレッド内メッセージもまとめて削除されます。
+func (h *Handler) DeleteAIChatThread(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	threadID, ok := parseIDFromPath(strings.TrimPrefix(r.URL.Path, "/api/me/ai-chat-threads/"), "")
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "AI対話スレッドIDが正しくありません")
+		return
+	}
+	if err := h.Chats.DeleteThread(r.Context(), userID, threadID); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ListAIChatMessages は、指定されたAI対話スレッド内の発言履歴を返します。
+// 画面を開き直しても会話が残るように、localStorageではなくDBから読み込みます。
+func (h *Handler) ListAIChatMessages(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	threadID, ok := parseAIChatThreadIDFromPath(r.URL.Path, "/messages")
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "AI対話スレッドIDが正しくありません")
+		return
+	}
+	messages, err := h.Chats.ListMessages(r.Context(), userID, threadID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "AI対話履歴の取得に失敗しました")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, messages)
+}
+
+// CreateAIChatMessage は、ユーザー発言を保存し、その文脈をもとにAI返信も保存して返します。
+// 1リクエストで「ユーザー発言」と「AI回答」を両方DBに残すため、再読み込み後も同じ会話を再現できます。
+func (h *Handler) CreateAIChatMessage(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	threadID, ok := parseAIChatThreadIDFromPath(r.URL.Path, "/messages")
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "AI対話スレッドIDが正しくありません")
+		return
+	}
+	var req models.AIChatTurnRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
+		return
+	}
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "質問を入力してください")
+		return
+	}
+	thread, err := h.Chats.FindThread(r.Context(), userID, threadID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "AI対話スレッドが見つかりません")
+		return
+	}
+	history, err := h.Chats.ListMessages(r.Context(), userID, threadID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "AI対話履歴の取得に失敗しました")
+		return
+	}
+	userMessage, err := h.Chats.InsertMessage(r.Context(), threadID, "user", message, "", false)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "ユーザー発言の保存に失敗しました")
+		return
+	}
+	prompt := buildGeneralChatPromptWithHistory(history, message)
+	text, notice, usedFallback, err := h.AI.GenerateTextWithFallback(prompt, func() string { return ai.FallbackGeneralChat(message) })
+	if err != nil {
+		log.Printf("ai threaded chat failed: %v", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "AI対話に失敗しました: "+err.Error())
+		return
+	}
+	assistantMessage, err := h.Chats.InsertMessage(r.Context(), threadID, "assistant", text, notice, usedFallback)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "AI回答の保存に失敗しました")
+		return
+	}
+	updatedThread, err := h.Chats.FindThread(r.Context(), userID, thread.ID)
+	if err != nil {
+		updatedThread = thread
+	}
+	httpx.WriteJSON(w, http.StatusCreated, models.AIChatTurnResponse{Thread: updatedThread, UserMessage: userMessage, AssistantMessage: assistantMessage})
+}
+
+// parseAIChatThreadIDFromPath は /api/me/ai-chat-threads/{id}/messages の{id}を取り出します。
+// 通常の parseIDFromPath では末尾に /messages があるURLを扱いにくいため、専用関数にしています。
+func parseAIChatThreadIDFromPath(path, suffix string) (int64, bool) {
+	if suffix != "" {
+		if !strings.HasSuffix(path, suffix) {
+			return 0, false
+		}
+		path = strings.TrimSuffix(path, suffix)
+	}
+	return parseIDFromPath(strings.TrimPrefix(path, "/api/me/ai-chat-threads/"), "")
+}
+
+// buildGeneralChatPromptWithHistory は、AI対話の直近履歴をプロンプトに含めます。
+// 長い履歴を全部送るとトークン量が増えるため、デモ用途では直近8件だけを使います。
+func buildGeneralChatPromptWithHistory(history []models.AIChatMessage, latestMessage string) string {
+	start := 0
+	if len(history) > 8 {
+		start = len(history) - 8
+	}
+	lines := []string{}
+	for _, msg := range history[start:] {
+		role := "ユーザー"
+		if msg.Role == "assistant" {
+			role = "AI"
+		}
+		body := strings.TrimSpace(msg.Body)
+		if body != "" {
+			lines = append(lines, role+": "+body)
+		}
+	}
+	contextText := "過去の会話はまだありません。"
+	if len(lines) > 0 {
+		contextText = strings.Join(lines, "\n")
+	}
+	return ai.BuildGeneralChatPrompt(fmt.Sprintf("過去の会話履歴:\n%s\n\n今回の相談:\n%s", contextText, latestMessage))
+}
+
+// AIChat は、古いフロントエンド互換の単発AI対話APIです。
+// 新しいUIでは /api/me/ai-chat-threads/{id}/messages を使い、履歴をDBへ保存します。
 func (h *Handler) AIChat(w http.ResponseWriter, r *http.Request) {
 	var req models.AIChatRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {

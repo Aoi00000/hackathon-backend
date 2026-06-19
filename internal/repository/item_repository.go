@@ -506,10 +506,10 @@ func (r *ItemRepository) Purchase(ctx context.Context, itemID, buyerID int64, de
 	if strings.TrimSpace(deliveryAddress) == "" {
 		return models.Purchase{}, fmt.Errorf("お届け先住所を入力してください")
 	}
+	// 購入手続き完了時点では、購入者の残高だけを差し引きます。
+	// 出品者への入金は、商品到着後に購入者が受け取り評価を行ったCompleteで実行します。
+	// これにより、フリマアプリで一般的な「一時預かり金（エスクロー）」に近い取引フローになります。
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET balance_coins=balance_coins-? WHERE id=?`, priceYen, buyerID); err != nil {
-		return models.Purchase{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET balance_coins=balance_coins+?, sales_coins=sales_coins+? WHERE id=?`, priceYen, priceYen, sellerID); err != nil {
 		return models.Purchase{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE items SET status='sold', updated_at=CURRENT_TIMESTAMP WHERE id=?`, itemID); err != nil {
@@ -524,8 +524,8 @@ func (r *ItemRepository) Purchase(ctx context.Context, itemID, buyerID int64, de
 	if err != nil {
 		return models.Purchase{}, err
 	}
-	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, ?, ?)`, sellerID, itemID, "商品が購入されました", title+" が購入されました。発送通知を行ってください")
-	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, ?, ?)`, buyerID, itemID, "購入手続きが完了しました", title+" の購入手続きが完了しました")
+	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, ?, ?)`, sellerID, itemID, "商品が購入されました", title+" が購入されました。売上は購入者の受け取り評価後に残高へ反映されます。発送通知を行ってください")
+	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, ?, ?)`, buyerID, itemID, "購入手続きが完了しました", title+" の購入手続きが完了しました。残高から商品代金を差し引きました")
 	if err := tx.Commit(); err != nil {
 		return models.Purchase{}, err
 	}
@@ -569,11 +569,11 @@ func (r *ItemRepository) Complete(ctx context.Context, itemID, buyerID int64, ra
 	if err != nil {
 		return p, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE users SET rating_sum=rating_sum+?, rating_count=rating_count+1, transaction_count=transaction_count+1 WHERE id=?`, rating, p.SellerID)
+	_, err = tx.ExecContext(ctx, `UPDATE users SET rating_sum=rating_sum+?, rating_count=rating_count+1, transaction_count=transaction_count+1, balance_coins=balance_coins+?, sales_coins=sales_coins+? WHERE id=?`, rating, p.PriceYen, p.PriceYen, p.SellerID)
 	if err != nil {
 		return p, err
 	}
-	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, '取引完了', '購入者が受け取り評価を行い、取引が完了しました')`, p.SellerID, itemID)
+	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, '取引完了・売上反映', ?)`, p.SellerID, itemID, fmt.Sprintf("購入者が受け取り評価を行い、取引が完了しました。売上%sを残高へ反映しました", formatJPY(p.PriceYen)))
 	_, _ = tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, '取引完了', '受け取り評価が完了しました')`, p.BuyerID, itemID)
 	if err := tx.Commit(); err != nil {
 		return p, err
@@ -673,6 +673,110 @@ func (r *ItemRepository) SimilarPriceStats(ctx context.Context, category string,
         WHERE status <> 'canceled' AND category = ? AND id <> ?`, category, excludeID)
 	err = row.Scan(&count, &min, &max, &avg)
 	return
+}
+
+// CreateStaleListingAdviceNotifications は、一定期間売れ残っている出品に対し、
+// MerRec由来のカテゴリ別観点とアプリ内の成約価格傾向を使って、出品者へ改善提案通知を作成します。
+//
+// 本番ではCloud SchedulerやCloud Tasksで定期実行するのが自然ですが、
+// ハッカソンのローカル・Cloud Runデモではサーバ起動時と簡易tickerで動く方が確認しやすいため、
+// main.goからこの関数を定期的に呼びます。
+func (r *ItemRepository) CreateStaleListingAdviceNotifications(ctx context.Context, days int) (int, error) {
+	if days <= 0 {
+		days = 7
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT i.id,
+		       i.seller_id,
+		       i.title,
+		       i.category,
+		       i.price_yen,
+		       COALESCE(i.size, ''),
+		       COALESCE(i.tags, ''),
+		       i.updated_at,
+		       COALESCE((
+		         SELECT AVG(p.price_yen)
+		         FROM purchases p
+		         JOIN items sold_item ON sold_item.id = p.item_id
+		         WHERE p.status = 'completed'
+		           AND sold_item.category = i.category
+		       ), 0) AS completed_avg_price
+		FROM items i
+		WHERE i.status = 'available'
+		  AND i.updated_at <= ?
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM notifications n
+		    WHERE n.user_id = i.seller_id
+		      AND n.item_id = i.id
+		      AND n.title = 'AI販売改善提案'
+		      AND n.created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY)
+		  )
+		ORDER BY i.updated_at ASC
+		LIMIT 50`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	created := 0
+	for rows.Next() {
+		var itemID, sellerID int64
+		var title, category, size, tags string
+		var priceYen int
+		var updatedAt time.Time
+		var completedAvgPrice float64
+		if err := rows.Scan(&itemID, &sellerID, &title, &category, &priceYen, &size, &tags, &updatedAt, &completedAvgPrice); err != nil {
+			return created, err
+		}
+		body := buildStaleListingAdviceBody(title, category, priceYen, size, tags, completedAvgPrice)
+		if _, err := r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, 'AI販売改善提案', ?)`, sellerID, itemID, body); err != nil {
+			return created, err
+		}
+		created++
+	}
+	return created, rows.Err()
+}
+
+func buildStaleListingAdviceBody(title, category string, priceYen int, size, tags string, completedAvgPrice float64) string {
+	// MerRecのようなC2Cデータでよく効く「購入前の不安解消」「検索語の補強」「価格調整」を、
+	// 商品カテゴリ・現在価格・成約平均価格から説明可能な形で通知します。
+	advice := []string{}
+	trimmedSize := strings.TrimSpace(size)
+	trimmedTags := strings.TrimSpace(tags)
+	if trimmedSize == "" {
+		advice = append(advice, "サイズ・型番・実寸など、購入判断に必要な具体情報を追記すると安心感が上がります。")
+	}
+	if trimmedTags == "" || len(strings.Split(trimmedTags, ",")) < 3 {
+		advice = append(advice, "検索用タグを3〜5個程度追加すると、自然言語検索やカテゴリ検索で見つかりやすくなります。")
+	}
+	for _, hint := range staleCategoryHints(category) {
+		advice = append(advice, hint)
+		break
+	}
+	if completedAvgPrice > 0 && float64(priceYen) > completedAvgPrice*1.1 {
+		advice = append(advice, fmt.Sprintf("同カテゴリの成約平均が約%d円のため、%d〜%d円程度への調整を検討できます。", int(completedAvgPrice), int(completedAvgPrice*0.95), int(completedAvgPrice*1.05)))
+	} else {
+		advice = append(advice, "すぐに値下げしない場合でも、写真順を見直し、1枚目に商品の状態が最も伝わる画像を置くと効果的です。")
+	}
+	return fmt.Sprintf("「%s」は7日以上Availableのままです。MerRec風の過去取引分析では、%s", strings.TrimSpace(title), strings.Join(advice, " "))
+}
+
+func staleCategoryHints(category string) []string {
+	c := strings.TrimSpace(category)
+	switch {
+	case strings.Contains(c, "本") || strings.Contains(c, "教材"):
+		return []string{"版・年度、書き込みの有無、解答冊子の有無を明記すると購入前の不安が下がります。"}
+	case strings.Contains(c, "スマホ") || strings.Contains(c, "PC") || strings.Contains(c, "家電"):
+		return []string{"動作確認日、対応端子、付属品、バッテリー状態を追記すると比較されやすくなります。"}
+	case strings.Contains(c, "ファッション"):
+		return []string{"着用回数、実寸、色味、汚れの位置を追記するとサイズ不安を減らせます。"}
+	case strings.Contains(c, "家具") || strings.Contains(c, "インテリア"):
+		return []string{"縦横高さ、設置イメージ、部屋での色味が分かる写真を足すと反応が上がりやすいです。"}
+	default:
+		return []string{"状態が伝わる写真、付属品、受け渡し条件を追記すると購入判断がしやすくなります。"}
+	}
 }
 
 func BuildFilterFromQuery(values map[string][]string) ItemFilter {

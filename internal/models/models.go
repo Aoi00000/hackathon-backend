@@ -270,16 +270,16 @@ type AskItemRequest struct {
 	Question string `json:"question"`
 }
 
+// PriceNegotiationRequest は、商品詳細の価格交渉アシスタントで使う入力です。
+// DesiredPriceYen は、購入検討者が希望する金額、または出品者が検討したい金額です。
+type PriceNegotiationRequest struct {
+	DesiredPriceYen int `json:"desiredPriceYen"`
+}
+
 type AITextResponse struct {
 	Text         string `json:"text"`
 	Notice       string `json:"notice,omitempty"`
 	UsedFallback bool   `json:"usedFallback,omitempty"`
-}
-
-// AITranslateRequest は、UIの英語表示切り替えでユーザー入力テキストを英訳するためのリクエストです。
-// 日本語に戻すときは再翻訳せず、フロントエンド側で元の日本語テキストを表示します。
-type AITranslateRequest struct {
-	Text string `json:"text"`
 }
 
 // ItemAIAnalysisResponse は、商品詳細で購入前の不安点・質問候補・カテゴリ不整合・価格感を返すレスポンスです。
@@ -359,6 +359,47 @@ type CreatePaymentMethodRequest struct {
 	ExpiryYear   int    `json:"expiryYear"`
 	SecurityCode string `json:"securityCode"`
 	IsDefault    bool   `json:"isDefault"`
+}
+
+// AIChatThread は、AI対話ページで話題ごとに分けて保存する会話スレッドです。
+// 1つのスレッドが「模様替え相談」「勉強グッズ相談」のような1つの話題に対応します。
+type AIChatThread struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"userId"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// AIChatMessage は、AI対話スレッド内の1発言です。
+// Role は user または assistant に限定し、UI側で吹き出しの左右・色を切り替えます。
+type AIChatMessage struct {
+	ID           int64     `json:"id"`
+	ThreadID     int64     `json:"threadId"`
+	Role         string    `json:"role"`
+	Body         string    `json:"body"`
+	Notice       string    `json:"notice,omitempty"`
+	UsedFallback bool      `json:"usedFallback"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// CreateAIChatThreadRequest は、ユーザーがAI対話ページで新しい話題を作るときの入力です。
+// Title を空にした場合は、バックエンド側で「新しい相談」として補完します。
+type CreateAIChatThreadRequest struct {
+	Title string `json:"title"`
+}
+
+// AIChatTurnRequest は、既存スレッドへユーザー発言を1件追加するときの入力です。
+type AIChatTurnRequest struct {
+	Message string `json:"message"`
+}
+
+// AIChatTurnResponse は、ユーザー発言とAI返信をまとめて返すレスポンスです。
+// フロントエンドは、この2件を既存のメッセージ配列へappendするだけで画面を更新できます。
+type AIChatTurnResponse struct {
+	Thread           AIChatThread  `json:"thread"`
+	UserMessage      AIChatMessage `json:"userMessage"`
+	AssistantMessage AIChatMessage `json:"assistantMessage"`
 }
 
 type AIChatRequest struct {

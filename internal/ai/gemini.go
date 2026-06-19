@@ -301,6 +301,44 @@ func BuildItemQAPrompt(title, description, category, conditionText, question str
 質問: %s`, title, category, conditionText, description, question)
 }
 
+func BuildNegotiationPrompt(title, description, category, conditionText string, currentPrice, desiredPrice int, role string, commentsSummary string) string {
+	return fmt.Sprintf(`あなたはフリマアプリ内の価格交渉アシスタントです。
+値下げ交渉では感情的な摩擦が起きやすいため、相手への敬意を保ち、押し付けず、短く丁寧な日本語の文面を作ってください。
+
+条件:
+- 現在ユーザーの立場は「%s」
+- 価格差が大きい場合は、無理に承諾・要求しない
+- 出品者なら「承諾する場合」「難しい場合」「代替案」の3パターンを出す
+- 購入検討者なら「丁寧な相談文」「相手が断りやすい余地」「購入意思」の3点を含める
+- 250字以内を目安にする
+- そのまま公開コメントまたはDMに貼れる文章にする
+
+商品名: %s
+カテゴリ: %s
+状態: %s
+現在価格: %d円
+希望金額: %d円
+商品説明: %s
+公開コメントの要約: %s`, role, title, category, conditionText, currentPrice, desiredPrice, description, commentsSummary)
+}
+
+func FallbackNegotiation(title string, currentPrice, desiredPrice int, role string) string {
+	// 外部AIが使えない場合でも、値下げ交渉の体験を止めないためのローカル生成です。
+	// 商品名・現在価格・希望金額・立場だけから、丁寧で摩擦の少ないテンプレートを作ります。
+	diff := currentPrice - desiredPrice
+	if role == "seller" {
+		if diff <= 0 {
+			return fmt.Sprintf("「%s」についてご提案ありがとうございます。ご希望の%d円で対応可能です。購入手続きに進んでいただければ、準備を進めます。よろしくお願いいたします。", strings.TrimSpace(title), desiredPrice)
+		}
+		if diff <= currentPrice/10 {
+			return fmt.Sprintf("「%s」についてご提案ありがとうございます。%d円であれば対応可能です。状態や送料込みである点も踏まえ、この金額でご検討いただけますと幸いです。", strings.TrimSpace(title), desiredPrice)
+		}
+		counter := currentPrice - currentPrice/20
+		return fmt.Sprintf("「%s」についてご提案ありがとうございます。申し訳ありませんが、%d円までのお値下げは現時点では難しいです。送料込みである点もあり、%d円程度であれば検討できます。", strings.TrimSpace(title), desiredPrice, counter)
+	}
+	return fmt.Sprintf("はじめまして。「%s」の購入を検討しています。大変恐縮ですが、%d円でお譲りいただくことは可能でしょうか。難しい場合は可能な範囲の金額を教えていただけると嬉しいです。よろしくお願いいたします。", strings.TrimSpace(title), desiredPrice)
+}
+
 func BuildRecommendationPrompt(userName string, itemsSummary string) string {
 	return fmt.Sprintf(`あなたはフリマアプリの推薦アシスタントです。
 ユーザー名: %s
@@ -308,18 +346,6 @@ func BuildRecommendationPrompt(userName string, itemsSummary string) string {
 %s
 
 上記の商品群について、購入検討の観点からおすすめ理由を120字以内で日本語でまとめてください。`, userName, itemsSummary)
-}
-
-func BuildTranslatePrompt(text string) string {
-	return fmt.Sprintf(`次の日本語UIテキストを、フリマアプリの画面表示として自然な英語へ翻訳してください。
-条件:
-- 意味を変えない
-- 商品名や固有名詞はできるだけ保持する
-- 出力は英訳本文だけにする
-- JSONや箇条書きの説明は不要
-
-テキスト:
-%s`, text)
 }
 
 func BuildItemAnalysisPrompt(title, description, category, conditionText string, priceYen int, priceInsight string, categoryHints string) string {

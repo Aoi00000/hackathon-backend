@@ -177,6 +177,32 @@ CREATE TABLE IF NOT EXISTS payment_methods (
   INDEX idx_payment_methods_user_created_at (user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- AI対話ページのスレッド情報です。
+-- 商品ごとのコメントとは別に、ユーザーが自由相談を話題ごとに保存できるようにします。
+CREATE TABLE IF NOT EXISTS ai_chat_threads (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  title VARCHAR(120) NOT NULL DEFAULT '新しい相談',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ai_chat_threads_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_ai_chat_threads_user_updated_at (user_id, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- AI対話ページの発言履歴です。
+-- role=user はユーザー発言、role=assistant はAI回答を表し、notice/used_fallbackで外部AIフォールバック状態も残します。
+CREATE TABLE IF NOT EXISTS ai_chat_messages (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  thread_id BIGINT NOT NULL,
+  role ENUM('user', 'assistant') NOT NULL,
+  body TEXT NOT NULL,
+  notice TEXT NULL,
+  used_fallback BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ai_chat_messages_thread FOREIGN KEY (thread_id) REFERENCES ai_chat_threads(id) ON DELETE CASCADE,
+  INDEX idx_ai_chat_messages_thread_created_at (thread_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 
 -- ============================================================
 -- デモ用初期データ
@@ -193,10 +219,10 @@ CREATE TABLE IF NOT EXISTS payment_methods (
 -- ============================================================
 
 INSERT INTO users (id, name, email, password_hash, balance_coins, sales_coins, rating_sum, rating_count, transaction_count, shipping_region, shipping_address) VALUES
-  (1, 'user1', 'user1@example.com', '$2a$10$BE9RamaQzyRtrfg02DwGyuZzIEyamfWbmRyD0ywq6qvOsAUfM5azS', 12000, 0, 0, 0, 0, '東京都', '東京都文京区本郷1-1-1'),
-  (2, 'user2', 'user2@example.com', '$2a$10$SbJUqn4yuDsuBPTOeWsSY.Y9g50XsRI/IV6wkgE43y6QZyGjAdKFm', 12000, 0, 0, 0, 0, '千葉県', '千葉県千葉市中央区弁天1-1-1'),
-  (3, 'user3', 'user3@example.com', '$2a$10$VcC9IuB8fsXuXQGp5U8E9O2iWORBJ14l1F65uAQshRY5iFixdbotq', 12000, 0, 0, 0, 0, '神奈川県', '神奈川県横浜市西区みなとみらい1-1-1'),
-  (4, 'user4', 'user4@example.com', '$2a$10$V3MIkZ/RZVdX2Q1YJT9wlOIBgO./YzVOIJIQr.tLlJuSJnvCW7NXi', 12000, 0, 0, 0, 0, '埼玉県', '埼玉県さいたま市浦和区高砂1-1-1')
+  (1, 'user1', 'user1@example.com', '$2a$10$BE9RamaQzyRtrfg02DwGyuZzIEyamfWbmRyD0ywq6qvOsAUfM5azS', 500, 0, 0, 0, 0, '東京都', '東京都文京区本郷1-1-1'),
+  (2, 'user2', 'user2@example.com', '$2a$10$SbJUqn4yuDsuBPTOeWsSY.Y9g50XsRI/IV6wkgE43y6QZyGjAdKFm', 1000, 0, 0, 0, 0, '千葉県', '千葉県千葉市中央区弁天1-1-1'),
+  (3, 'user3', 'user3@example.com', '$2a$10$VcC9IuB8fsXuXQGp5U8E9O2iWORBJ14l1F65uAQshRY5iFixdbotq', 1000, 0, 0, 0, 0, '神奈川県', '神奈川県横浜市西区みなとみらい1-1-1'),
+  (4, 'user4', 'user4@example.com', '$2a$10$V3MIkZ/RZVdX2Q1YJT9wlOIBgO./YzVOIJIQr.tLlJuSJnvCW7NXi', 100000, 0, 0, 0, 0, '埼玉県', '埼玉県さいたま市浦和区高砂1-1-1')
 ON DUPLICATE KEY UPDATE name=VALUES(name), password_hash=VALUES(password_hash), balance_coins=VALUES(balance_coins), shipping_region=VALUES(shipping_region), shipping_address=VALUES(shipping_address);
 
 INSERT INTO items (id, product_code, seller_id, title, description, category, condition_text, price_yen, image_url, delivery_method, shipping_days, ship_from_region, size, color, tags, status) VALUES
@@ -221,6 +247,10 @@ INSERT INTO items (id, product_code, seller_id, title, description, category, co
   (19, 'DEMO-019', 4, 'ミニ観葉植物 鉢付き', '部屋に置きやすい小さめの観葉植物です。鉢付きなので、そのまま飾れます。対面受け渡し希望です。', '家具・インテリア', '目立った傷や汚れなし', 1100, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2VkZTlmZSIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5QbGFudDwvdGV4dD4KICA8dGV4dCB4PSI1MCUiIHk9IjcyJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjQiIGZpbGw9IiM2NDc0OGIiPkRFTU8tMDE5IGltYWdlIEE8L3RleHQ+Cjwvc3ZnPg==', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2RjZmNlNyIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5QbGFudDwvdGV4dD4KICA8dGV4dCB4PSI1MCUiIHk9IjcyJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjQiIGZpbGw9IiM2NDc0OGIiPkRFTU8tMDE5IGltYWdlIEI8L3RleHQ+Cjwvc3ZnPg=='), '対面受け渡し', 1, '埼玉県', '小型', '緑', '植物,インテリア,観葉植物,鉢付き', 'available'),
   (20, 'DEMO-020', 4, 'ライブ記念カード', 'イベントの記念カードです。実際の入場券ではありません。コレクション向けの商品です。', 'チケット', '目立った傷や汚れなし', 600, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2NmZmFmZSIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5NZW1vcmlhbCBDYXJkPC90ZXh0PgogIDx0ZXh0IHg9IjUwJSIgeT0iNzIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCIgZmlsbD0iIzY0NzQ4YiI+REVNTy0wMjAgaW1hZ2UgQTwvdGV4dD4KPC9zdmc+', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2ZlZjNjNyIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5NZW1vcmlhbCBDYXJkPC90ZXh0PgogIDx0ZXh0IHg9IjUwJSIgeT0iNzIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCIgZmlsbD0iIzY0NzQ4YiI+REVNTy0wMjAgaW1hZ2UgQjwvdGV4dD4KPC9zdmc+'), '配送のみ', 2, '埼玉県', '小型', 'その他', 'チケット,記念カード,コレクション', 'available')
 ON DUPLICATE KEY UPDATE title=VALUES(title), description=VALUES(description), category=VALUES(category), condition_text=VALUES(condition_text), price_yen=VALUES(price_yen), image_url=VALUES(image_url), delivery_method=VALUES(delivery_method), shipping_days=VALUES(shipping_days), ship_from_region=VALUES(ship_from_region), size=VALUES(size), color=VALUES(color), tags=VALUES(tags), status=VALUES(status);
+
+-- AI販売改善提案のデモ確認用に、いくつかのAvailable商品を7日以上前に更新された状態へ戻します。
+-- サーバ起動時の定期チェックにより、出品者へ「AI販売改善提案」通知が作成されます。
+UPDATE items SET updated_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 8 DAY) WHERE id IN (1, 3, 17) AND status = 'available';
 
 ALTER TABLE users AUTO_INCREMENT = 100;
 ALTER TABLE items AUTO_INCREMENT = 1000;

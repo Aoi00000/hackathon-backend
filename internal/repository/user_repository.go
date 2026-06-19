@@ -86,15 +86,15 @@ func scanUser(scanner interface{ Scan(dest ...any) error }) (models.User, error)
 
 func userSelect(where string) string {
 	// 購入・売上の集計は purchases テーブルから毎回算出します。
-	// このアプリでは購入時点で出品者に売上金が加算されるため、
-	// status が canceled でない取引を利用額・売上額として数えます。
+	// 利用額は「購入手続き完了時点」で購入者の残高から差し引かれるため、canceled以外を数えます。
+	// 売上額は「受け取り評価完了時点」で出品者の残高へ反映されるため、completedだけを数えます。
 	base := `SELECT u.id, u.name, u.email, u.password_hash, u.balance_coins, u.sales_coins,
                 CASE WHEN u.rating_count = 0 THEN 0 ELSE u.rating_sum / u.rating_count END AS rating_average,
                 u.rating_count, u.transaction_count, u.shipping_region, u.shipping_address,
                 COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.buyer_id = u.id AND p.status <> 'canceled' AND p.created_at >= DATE_FORMAT(CURRENT_DATE(), '%Y-%m-01')), 0) AS monthly_spend_coins,
                 COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.buyer_id = u.id AND p.status <> 'canceled'), 0) AS total_spend_coins,
-                COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.seller_id = u.id AND p.status <> 'canceled' AND p.created_at >= DATE_FORMAT(CURRENT_DATE(), '%Y-%m-01')), 0) AS monthly_sales_coins,
-                COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.seller_id = u.id AND p.status <> 'canceled'), 0) AS total_sales_coins,
+                COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.seller_id = u.id AND p.status = 'completed' AND p.completed_at >= DATE_FORMAT(CURRENT_DATE(), '%Y-%m-01')), 0) AS monthly_sales_coins,
+                COALESCE((SELECT SUM(p.price_yen) FROM purchases p WHERE p.seller_id = u.id AND p.status = 'completed'), 0) AS total_sales_coins,
                 u.created_at
          FROM users u `
 	return base + where
@@ -380,15 +380,28 @@ func (r *UserRepository) ListMonthlyMoneySummary(ctx context.Context, userID int
 	}
 
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym,
-		       SUM(CASE WHEN seller_id = ? THEN price_yen ELSE 0 END) AS sales_yen,
-		       SUM(CASE WHEN buyer_id = ? THEN price_yen ELSE 0 END) AS spend_yen
-		FROM purchases
-		WHERE status <> 'canceled'
-		  AND (seller_id = ? OR buyer_id = ?)
-		  AND created_at >= ?
+		SELECT ym,
+		       SUM(sales_yen) AS sales_yen,
+		       SUM(spend_yen) AS spend_yen
+		FROM (
+			SELECT DATE_FORMAT(completed_at, '%Y-%m') AS ym,
+			       price_yen AS sales_yen,
+			       0 AS spend_yen
+			FROM purchases
+			WHERE seller_id = ?
+			  AND status = 'completed'
+			  AND completed_at >= ?
+			UNION ALL
+			SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym,
+			       0 AS sales_yen,
+			       price_yen AS spend_yen
+			FROM purchases
+			WHERE buyer_id = ?
+			  AND status <> 'canceled'
+			  AND created_at >= ?
+		) x
 		GROUP BY ym
-		ORDER BY ym ASC`, userID, userID, userID, userID, firstMonth)
+		ORDER BY ym ASC`, userID, firstMonth, userID, firstMonth)
 	if err != nil {
 		return nil, err
 	}
@@ -464,6 +477,9 @@ func (r *UserRepository) CreatePaymentMethod(ctx context.Context, userID int64, 
 	if err != nil {
 		return models.PaymentMethod{}, err
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, NULL, '支払い方法登録完了', ?)`, userID, fmt.Sprintf("%s（下4桁 %s）を支払い方法として登録しました", req.Label, last4)); err != nil {
+		return models.PaymentMethod{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return models.PaymentMethod{}, err
 	}
@@ -497,6 +513,9 @@ func (r *UserRepository) SetDefaultPaymentMethod(ctx context.Context, userID, id
 	if _, err := tx.ExecContext(ctx, `UPDATE payment_methods SET is_default = 1 WHERE id = ? AND user_id = ?`, id, userID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, NULL, '支払い方法変更完了', '残高チャージに使用する既定の支払い方法を変更しました')`, userID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -524,6 +543,9 @@ func (r *UserRepository) DeletePaymentMethod(ctx context.Context, userID, id int
 				return err
 			}
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, NULL, '支払い方法削除完了', '登録済みの支払い方法を削除しました')`, userID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
