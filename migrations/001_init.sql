@@ -259,11 +259,11 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
 
 -- 【デモデータ投入】users に初期データを入れ、ログイン直後からデモできる状態を作ります。
 INSERT INTO users (id, name, email, password_hash, balance_coins, sales_coins, rating_sum, rating_count, transaction_count, shipping_region, shipping_address) VALUES
-  (1, 'user1', 'user1@example.com', '$2a$10$BE9RamaQzyRtrfg02DwGyuZzIEyamfWbmRyD0ywq6qvOsAUfM5azS', 500, 0, 0, 0, 0, '東京都', '東京都文京区本郷1-1-1'),
-  (2, 'user2', 'user2@example.com', '$2a$10$SbJUqn4yuDsuBPTOeWsSY.Y9g50XsRI/IV6wkgE43y6QZyGjAdKFm', 1000, 0, 0, 0, 0, '千葉県', '千葉県千葉市中央区弁天1-1-1'),
-  (3, 'user3', 'user3@example.com', '$2a$10$VcC9IuB8fsXuXQGp5U8E9O2iWORBJ14l1F65uAQshRY5iFixdbotq', 1000, 0, 0, 0, 0, '神奈川県', '神奈川県横浜市西区みなとみらい1-1-1'),
-  (4, 'user4', 'user4@example.com', '$2a$10$V3MIkZ/RZVdX2Q1YJT9wlOIBgO./YzVOIJIQr.tLlJuSJnvCW7NXi', 100000, 0, 0, 0, 0, '埼玉県', '埼玉県さいたま市浦和区高砂1-1-1')
-ON DUPLICATE KEY UPDATE name=VALUES(name), password_hash=VALUES(password_hash), balance_coins=VALUES(balance_coins), shipping_region=VALUES(shipping_region), shipping_address=VALUES(shipping_address);
+  (1, 'user1', 'user1@example.com', '$2a$10$BE9RamaQzyRtrfg02DwGyuZzIEyamfWbmRyD0ywq6qvOsAUfM5azS', 500, 20000, 15, 3, 3, '東京都', '東京都文京区本郷1-1-1'),
+  (2, 'user2', 'user2@example.com', '$2a$10$SbJUqn4yuDsuBPTOeWsSY.Y9g50XsRI/IV6wkgE43y6QZyGjAdKFm', 1000, 23500, 15, 3, 3, '千葉県', '千葉県千葉市中央区弁天1-1-1'),
+  (3, 'user3', 'user3@example.com', '$2a$10$VcC9IuB8fsXuXQGp5U8E9O2iWORBJ14l1F65uAQshRY5iFixdbotq', 10000, 1000, 5, 1, 1, '神奈川県', '神奈川県横浜市西区みなとみらい1-1-1'),
+  (4, 'user4', 'user4@example.com', '$2a$10$V3MIkZ/RZVdX2Q1YJT9wlOIBgO./YzVOIJIQr.tLlJuSJnvCW7NXi', 100000, 8000, 5, 1, 1, '埼玉県', '埼玉県さいたま市浦和区高砂1-1-1')
+ON DUPLICATE KEY UPDATE name=VALUES(name), password_hash=VALUES(password_hash), balance_coins=VALUES(balance_coins), sales_coins=VALUES(sales_coins), rating_sum=VALUES(rating_sum), rating_count=VALUES(rating_count), transaction_count=VALUES(transaction_count), shipping_region=VALUES(shipping_region), shipping_address=VALUES(shipping_address);
 
 -- 【デモデータ投入】items に初期データを入れ、ログイン直後からデモできる状態を作ります。
 INSERT INTO items (id, product_code, seller_id, title, description, category, condition_text, price_yen, image_url, delivery_method, shipping_days, ship_from_region, size, color, tags, status) VALUES
@@ -289,9 +289,45 @@ INSERT INTO items (id, product_code, seller_id, title, description, category, co
   (20, 'DEMO-020', 4, 'ライブ記念カード', 'イベントの記念カードです。実際の入場券ではありません。コレクション向けの商品です。', 'チケット', '目立った傷や汚れなし', 600, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2NmZmFmZSIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5NZW1vcmlhbCBDYXJkPC90ZXh0PgogIDx0ZXh0IHg9IjUwJSIgeT0iNzIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCIgZmlsbD0iIzY0NzQ4YiI+REVNTy0wMjAgaW1hZ2UgQTwvdGV4dD4KPC9zdmc+', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2ZlZjNjNyIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5NZW1vcmlhbCBDYXJkPC90ZXh0PgogIDx0ZXh0IHg9IjUwJSIgeT0iNzIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCIgZmlsbD0iIzY0NzQ4YiI+REVNTy0wMjAgaW1hZ2UgQjwvdGV4dD4KPC9zdmc+'), '配送のみ', 2, '埼玉県', '小型', 'その他', 'チケット,記念カード,コレクション', 'available')
 ON DUPLICATE KEY UPDATE title=VALUES(title), description=VALUES(description), category=VALUES(category), condition_text=VALUES(condition_text), price_yen=VALUES(price_yen), image_url=VALUES(image_url), delivery_method=VALUES(delivery_method), shipping_days=VALUES(shipping_days), ship_from_region=VALUES(ship_from_region), size=VALUES(size), color=VALUES(color), tags=VALUES(tags), status=VALUES(status);
 
+-- 各デモユーザーの既定カードです。登録入力は順に 1111000011110000、2222000022220000、
+-- 3333000033330000、4444000044440000（全カード有効期限12/28、セキュリティコード123）です。
+-- 登録APIと同じく番号は下4桁のみを保存し、セキュリティコードを永続化しない既存の安全設計を維持します。
+INSERT INTO payment_methods (id, user_id, label, card_last4, holder_name, expiry_month, expiry_year, is_default, created_at) VALUES
+  (1, 1, 'メインカード', '0000', 'USER1', 12, 2028, TRUE, '2026-03-01 09:00:00'),
+  (2, 2, 'メインカード', '0000', 'USER2', 12, 2028, TRUE, '2026-03-01 09:00:00'),
+  (3, 3, 'メインカード', '0000', 'USER3', 12, 2028, TRUE, '2026-03-01 09:00:00'),
+  (4, 4, 'メインカード', '0000', 'USER4', 12, 2028, TRUE, '2026-03-01 09:00:00')
+ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), label=VALUES(label), card_last4=VALUES(card_last4), holder_name=VALUES(holder_name), expiry_month=VALUES(expiry_month), expiry_year=VALUES(expiry_year), is_default=VALUES(is_default), created_at=VALUES(created_at);
+
+-- 2026年3月〜5月の購入履歴用商品です。既存20商品とは分離し、完了済み取引として履歴・集計・評価へ反映します。
+SET @history_image = JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGJlYWZlIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMyIiBmaWxsPSIjMWYyOTM3Ij5QYXN0IFRyYW5zYWN0aW9uPC90ZXh0Pjwvc3ZnPg==');
+INSERT INTO items (id, product_code, seller_id, title, description, category, condition_text, price_yen, image_url, delivery_method, shipping_days, ship_from_region, size, color, tags, status, created_at, updated_at) VALUES
+  (21, 'HISTORY-001', 2, '統計学入門テキスト', '確率分布から仮説検定までを扱う大学初年級向けの教科書です。重要箇所に少量の書き込みがあります。', '本・教材', 'やや傷や汚れあり', 1500, @history_image, '配送のみ', 2, '千葉県', '単行本', '白', '統計学,教科書,大学,過去取引', 'sold', '2026-03-01 10:00:00', '2026-03-12 18:00:00'),
+  (22, 'HISTORY-002', 1, 'USBコンデンサーマイク', 'オンライン会議と動画収録に使用できるUSB接続マイクです。動作確認と簡易清掃を済ませています。', 'スマホ・PC周辺機器', '目立った傷や汚れなし', 2000, @history_image, '配送のみ', 2, '東京都', '小型', '黒', 'マイク,USB,配信,過去取引', 'sold', '2026-03-05 10:00:00', '2026-03-22 18:00:00'),
+  (23, 'HISTORY-003', 2, 'メカニカルキーボード', '日本語配列のメカニカルキーボードです。全キーの入力とバックライトの点灯を確認済みです。', 'スマホ・PC周辺機器', '目立った傷や汚れなし', 7000, @history_image, '配送のみ', 2, '千葉県', '中型', '黒', 'キーボード,PC,メカニカル,過去取引', 'sold', '2026-04-01 10:00:00', '2026-04-10 18:00:00'),
+  (24, 'HISTORY-004', 1, 'ノイズキャンセリングヘッドホン', '通学や作業に使いやすいワイヤレスヘッドホンです。本体、充電ケーブル、収納ケースが付属します。', 'ガジェット・家電', '目立った傷や汚れなし', 10000, @history_image, '配送のみ', 2, '東京都', '中型', 'シルバー', 'ヘッドホン,ワイヤレス,音楽,過去取引', 'sold', '2026-04-05 10:00:00', '2026-04-24 18:00:00'),
+  (25, 'HISTORY-005', 2, '10インチタブレット端末', '動画視聴と資料閲覧に使っていたタブレットです。初期化、充電、Wi-Fi接続を確認済みです。', 'ガジェット・家電', 'やや傷や汚れあり', 15000, @history_image, '配送のみ', 3, '千葉県', '中型', 'グレー', 'タブレット,動画,学習,過去取引', 'sold', '2026-05-01 10:00:00', '2026-05-10 18:00:00'),
+  (26, 'HISTORY-006', 1, 'ワークデスクチェア', '背もたれの角度と座面の高さを調整できるデスクチェアです。キャスターも問題なく動作します。', '家具・インテリア', '目立った傷や汚れなし', 8000, @history_image, '対面受け渡し', 2, '東京都', '大型', '黒', 'チェア,デスク,家具,過去取引', 'sold', '2026-05-03 10:00:00', '2026-05-23 18:00:00'),
+  (27, 'HISTORY-007', 3, '英語長文問題集', '大学受験向けの英語長文問題集です。解答冊子付きで、本文への書き込みはありません。', '本・教材', '目立った傷や汚れなし', 1000, @history_image, '配送のみ', 2, '神奈川県', 'B5', '白', '英語,問題集,大学受験,過去取引', 'sold', '2026-04-02 10:00:00', '2026-04-17 18:00:00'),
+  (28, 'HISTORY-008', 4, '小型ホームプロジェクター', 'HDMI入力対応の小型プロジェクターです。映像出力、リモコン操作、スピーカーを確認済みです。', 'ガジェット・家電', '目立った傷や汚れなし', 8000, @history_image, '配送のみ', 2, '埼玉県', '小型', '白', 'プロジェクター,映像,家電,過去取引', 'sold', '2026-05-02 10:00:00', '2026-05-17 18:00:00')
+ON DUPLICATE KEY UPDATE product_code=VALUES(product_code), seller_id=VALUES(seller_id), title=VALUES(title), description=VALUES(description), category=VALUES(category), condition_text=VALUES(condition_text), price_yen=VALUES(price_yen), image_url=VALUES(image_url), delivery_method=VALUES(delivery_method), shipping_days=VALUES(shipping_days), ship_from_region=VALUES(ship_from_region), size=VALUES(size), color=VALUES(color), tags=VALUES(tags), status=VALUES(status), created_at=VALUES(created_at), updated_at=VALUES(updated_at);
+
+INSERT INTO purchases (id, item_id, buyer_id, seller_id, price_yen, status, delivery_address, shipping_deadline, shipped_at, completed_at, rating, rating_comment, created_at) VALUES
+  (1, 21, 1, 2, 1500, 'completed', '東京都文京区本郷1-1-1', '2026-03-13 10:00:00', '2026-03-11 12:00:00', '2026-03-12 18:00:00', 5, '丁寧な梱包で、説明どおりの商品でした。', '2026-03-10 10:00:00'),
+  (2, 22, 2, 1, 2000, 'completed', '千葉県千葉市中央区弁天1-1-1', '2026-03-23 10:00:00', '2026-03-21 12:00:00', '2026-03-22 18:00:00', 5, '動作も問題なく、スムーズに取引できました。', '2026-03-20 10:00:00'),
+  (3, 23, 1, 2, 7000, 'completed', '東京都文京区本郷1-1-1', '2026-04-11 10:00:00', '2026-04-09 12:00:00', '2026-04-10 18:00:00', 5, '状態がよく、発送も迅速でした。', '2026-04-08 10:00:00'),
+  (4, 24, 2, 1, 10000, 'completed', '千葉県千葉市中央区弁天1-1-1', '2026-04-25 10:00:00', '2026-04-23 12:00:00', '2026-04-24 18:00:00', 5, '付属品も揃っていて満足しています。', '2026-04-22 10:00:00'),
+  (5, 25, 1, 2, 15000, 'completed', '東京都文京区本郷1-1-1', '2026-05-11 10:00:00', '2026-05-09 12:00:00', '2026-05-10 18:00:00', 5, '説明が分かりやすく安心して購入できました。', '2026-05-08 10:00:00'),
+  (6, 26, 2, 1, 8000, 'completed', '千葉県千葉市中央区弁天1-1-1', '2026-05-24 10:00:00', '2026-05-22 12:00:00', '2026-05-23 18:00:00', 5, '受け渡しが丁寧で、商品も良好でした。', '2026-05-21 10:00:00'),
+  (7, 27, 4, 3, 1000, 'completed', '埼玉県さいたま市浦和区高砂1-1-1', '2026-04-18 10:00:00', '2026-04-16 12:00:00', '2026-04-17 18:00:00', 5, 'きれいな状態で届きました。', '2026-04-15 10:00:00'),
+  (8, 28, 3, 4, 8000, 'completed', '神奈川県横浜市西区みなとみらい1-1-1', '2026-05-18 10:00:00', '2026-05-16 12:00:00', '2026-05-17 18:00:00', 5, '動作確認済みで、すぐに使えました。', '2026-05-15 10:00:00')
+ON DUPLICATE KEY UPDATE item_id=VALUES(item_id), buyer_id=VALUES(buyer_id), seller_id=VALUES(seller_id), price_yen=VALUES(price_yen), status=VALUES(status), delivery_address=VALUES(delivery_address), shipping_deadline=VALUES(shipping_deadline), shipped_at=VALUES(shipped_at), completed_at=VALUES(completed_at), rating=VALUES(rating), rating_comment=VALUES(rating_comment), created_at=VALUES(created_at);
+
 -- AI販売改善提案のデモ確認用に、いくつかのAvailable商品を7日以上前に更新された状態へ戻します。
 -- サーバ起動時の定期チェックにより、出品者へ「AI販売改善提案」通知が作成されます。
 UPDATE items SET updated_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 8 DAY) WHERE id IN (1, 3, 17) AND status = 'available';
 
 ALTER TABLE users AUTO_INCREMENT = 100;
 ALTER TABLE items AUTO_INCREMENT = 1000;
+ALTER TABLE purchases AUTO_INCREMENT = 1000;
+ALTER TABLE payment_methods AUTO_INCREMENT = 100;
