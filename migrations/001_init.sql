@@ -289,6 +289,13 @@ INSERT INTO items (id, product_code, seller_id, title, description, category, co
   (20, 'DEMO-020', 4, 'ライブ記念カード', 'イベントの記念カードです。実際の入場券ではありません。コレクション向けの商品です。', 'チケット', '目立った傷や汚れなし', 600, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2NmZmFmZSIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5NZW1vcmlhbCBDYXJkPC90ZXh0PgogIDx0ZXh0IHg9IjUwJSIgeT0iNzIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCIgZmlsbD0iIzY0NzQ4YiI+REVNTy0wMjAgaW1hZ2UgQTwvdGV4dD4KPC9zdmc+', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2ZlZjNjNyIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5NZW1vcmlhbCBDYXJkPC90ZXh0PgogIDx0ZXh0IHg9IjUwJSIgeT0iNzIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCIgZmlsbD0iIzY0NzQ4YiI+REVNTy0wMjAgaW1hZ2UgQjwvdGV4dD4KPC9zdmc+'), '配送のみ', 2, '埼玉県', '小型', 'その他', 'チケット,記念カード,コレクション', 'available')
 ON DUPLICATE KEY UPDATE title=VALUES(title), description=VALUES(description), category=VALUES(category), condition_text=VALUES(condition_text), price_yen=VALUES(price_yen), image_url=VALUES(image_url), delivery_method=VALUES(delivery_method), shipping_days=VALUES(shipping_days), ship_from_region=VALUES(ship_from_region), size=VALUES(size), color=VALUES(color), tags=VALUES(tags), status=VALUES(status);
 
+-- 価格帯フィルタや高額商品の購入可否をデモしやすくするため、販売中の商品を3件追加します。
+INSERT INTO items (id, product_code, seller_id, title, description, category, condition_text, price_yen, image_url, delivery_method, shipping_days, ship_from_region, size, color, tags, status) VALUES
+  (29, 'DEMO-021', 1, '音楽フェス記念チケット', '終了済み音楽フェスの記念チケットです。入場券としては使用できません。コレクション用途として保管していました。', 'チケット', '目立った傷や汚れなし', 5000, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZTBmMmZlIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjM4IiBmaWxsPSIjMWYyOTM3Ij5UaWNrZXQ8L3RleHQ+PC9zdmc+'), '配送のみ', 2, '東京都', '小型', 'その他', 'チケット,音楽フェス,記念品,コレクション', 'available'),
+  (30, 'DEMO-022', 2, '木製ワークデスク', '幅120cmの木製ワークデスクです。天板に小さな使用跡がありますが、がたつきはなく安定して使用できます。', '家具・インテリア', 'やや傷や汚れあり', 10000, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZTBmMmZlIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjM4IiBmaWxsPSIjMWYyOTM3Ij5EZXNrPC90ZXh0Pjwvc3ZnPg=='), '対面受け渡し', 3, '千葉県', '大型', '茶', '机,デスク,木製,ワークスペース', 'available'),
+  (31, 'DEMO-023', 3, 'テナーサックス ケース付き', '演奏経験者向けのテナーサックスです。音出しとキー動作を確認済みで、専用ケースとストラップが付属します。', '音楽・楽器', '目立った傷や汚れなし', 80000, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZTBmMmZlIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjM4IiBmaWxsPSIjMWYyOTM3Ij5JbnN0cnVtZW50PC90ZXh0Pjwvc3ZnPg=='), '対面・配送相談', 4, '神奈川県', '大型', 'ゴールド', 'サックス,管楽器,楽器,ケース付き', 'available')
+ON DUPLICATE KEY UPDATE product_code=VALUES(product_code), seller_id=VALUES(seller_id), title=VALUES(title), description=VALUES(description), category=VALUES(category), condition_text=VALUES(condition_text), price_yen=VALUES(price_yen), image_url=VALUES(image_url), delivery_method=VALUES(delivery_method), shipping_days=VALUES(shipping_days), ship_from_region=VALUES(ship_from_region), size=VALUES(size), color=VALUES(color), tags=VALUES(tags), status=VALUES(status);
+
 -- 各デモユーザーの既定カードです。登録入力は順に 1111000011110000、2222000022220000、
 -- 3333000033330000、4444000044440000（全カード有効期限12/28、セキュリティコード123）です。
 -- 登録APIと同じく番号は下4桁のみを保存し、セキュリティコードを永続化しない既存の安全設計を維持します。
@@ -323,9 +330,16 @@ INSERT INTO purchases (id, item_id, buyer_id, seller_id, price_yen, status, deli
   (8, 28, 3, 4, 8000, 'completed', '神奈川県横浜市西区みなとみらい1-1-1', '2026-05-18 10:00:00', '2026-05-16 12:00:00', '2026-05-17 18:00:00', 5, '動作確認済みで、すぐに使えました。', '2026-05-15 10:00:00')
 ON DUPLICATE KEY UPDATE item_id=VALUES(item_id), buyer_id=VALUES(buyer_id), seller_id=VALUES(seller_id), price_yen=VALUES(price_yen), status=VALUES(status), delivery_address=VALUES(delivery_address), shipping_deadline=VALUES(shipping_deadline), shipped_at=VALUES(shipped_at), completed_at=VALUES(completed_at), rating=VALUES(rating), rating_comment=VALUES(rating_comment), created_at=VALUES(created_at);
 
--- AI販売改善提案のデモ確認用に、いくつかのAvailable商品を7日以上前に更新された状態へ戻します。
--- サーバ起動時の定期チェックにより、出品者へ「AI販売改善提案」通知が作成されます。
-UPDATE items SET updated_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 8 DAY) WHERE id IN (1, 3, 17) AND status = 'available';
+-- 並び替えを確認しやすいよう、販売中の初期商品には重複しない最終更新時刻を設定します。
+-- id=1,3,17は従来どおり7日以上前に保ち、AI販売改善提案の対象も維持します。
+UPDATE items
+SET updated_at = CASE
+  WHEN id = 1 THEN TIMESTAMPADD(DAY, -10, UTC_TIMESTAMP())
+  WHEN id = 3 THEN TIMESTAMPADD(DAY, -9, UTC_TIMESTAMP())
+  WHEN id = 17 THEN TIMESTAMPADD(DAY, -8, UTC_TIMESTAMP())
+  ELSE TIMESTAMPADD(HOUR, -id, UTC_TIMESTAMP())
+END
+WHERE status = 'available' AND id IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 29, 30, 31);
 
 ALTER TABLE users AUTO_INCREMENT = 100;
 ALTER TABLE items AUTO_INCREMENT = 1000;
