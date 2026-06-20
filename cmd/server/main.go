@@ -1,3 +1,13 @@
+// ============================================================
+// ファイル概要: hackathon-backend/cmd/server/main.go
+// 役割: HTTPサーバーの起動、CORS設定、ルーティング登録、AI販売改善通知の定期実行をまとめるエントリーポイントです。
+//
+// 読み方の目安:
+// 1. まずpackage/importを確認し、このファイルがどの層に属するかを把握します。
+// 2. type定義では、DB/API/画面で受け渡すデータの形を確認します。
+// 3. func定義では、入力検証、DB処理、AI呼び出し、レスポンス整形の順に読むと流れを追いやすくなります。
+//
+// ============================================================
 // Package main は、AI Flea Market のGoバックエンドを起動するエントリポイントです。
 //
 // ここでは設定読み込み、DB接続、HTTPルーティング、認証ミドルウェアの接続を行います。
@@ -19,6 +29,7 @@ import (
 	"hackathon-backend/internal/httpx"
 )
 
+// 【詳細コメント】main は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -186,6 +197,7 @@ func main() {
 	}
 }
 
+// 【詳細コメント】withCORS は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func withCORS(frontendOrigin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")

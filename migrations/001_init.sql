@@ -1,3 +1,15 @@
+-- ============================================================
+-- ファイル概要: hackathon-backend/migrations/001_init.sql
+-- 役割: MySQLの初期スキーマとデモデータを定義し、ローカルでもクラウドでも同じ初期状態を再現します。
+--
+-- 読み方の目安:
+-- 1. 文字コード設定で日本語データを安全に扱えることを確認します。
+-- 2. CREATE TABLE 群でER図のエンティティと外部キー関係を把握します。
+-- 3. INSERT 群でデモ用ユーザー・商品・取引状態を確認します。
+-- 4. AUTO_INCREMENT調整により、初期データと新規作成データのID衝突を防ぎます。
+--
+-- スキーマやデモデータの意味が追いやすいよう、テーブル単位・制約単位・投入データ単位で説明を補足しています。
+-- ============================================================
 /*!40101 SET NAMES utf8mb4 */;
 SET character_set_client = utf8mb4;
 SET character_set_connection = utf8mb4;
@@ -8,6 +20,7 @@ SET character_set_results = utf8mb4;
 -- MySQL 8.0 / utf8mb4 を想定
 -- ============================================================
 
+-- 【テーブル定義】users はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(80) NOT NULL,
@@ -23,6 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】items はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS items (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   product_code VARCHAR(32) UNIQUE,
@@ -49,6 +63,7 @@ CREATE TABLE IF NOT EXISTS items (
   FULLTEXT INDEX ft_items_title_description (title, description)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】purchases はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS purchases (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   item_id BIGINT NOT NULL UNIQUE,
@@ -71,6 +86,7 @@ CREATE TABLE IF NOT EXISTS purchases (
   INDEX idx_purchases_status_deadline (status, shipping_deadline)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】messages はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   item_id BIGINT NOT NULL,
@@ -89,6 +105,7 @@ CREATE TABLE IF NOT EXISTS messages (
   INDEX idx_messages_receiver_id (receiver_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】private_messages はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS private_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   item_id BIGINT NOT NULL,
@@ -106,6 +123,7 @@ CREATE TABLE IF NOT EXISTS private_messages (
   INDEX idx_private_messages_receiver_created_at (receiver_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】checklist はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS checklist (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -118,6 +136,7 @@ CREATE TABLE IF NOT EXISTS checklist (
   INDEX idx_checklist_user_created_at (user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】notifications はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS notifications (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -131,6 +150,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   INDEX idx_notifications_user_created_at (user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】saved_searches はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS saved_searches (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -141,6 +161,7 @@ CREATE TABLE IF NOT EXISTS saved_searches (
   INDEX idx_saved_searches_user_created_at (user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】blocked_users はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS blocked_users (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   blocker_id BIGINT NOT NULL,
@@ -151,6 +172,7 @@ CREATE TABLE IF NOT EXISTS blocked_users (
   UNIQUE KEY uq_blocked_users_pair (blocker_id, blocked_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 【テーブル定義】support_messages はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS support_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -162,6 +184,7 @@ CREATE TABLE IF NOT EXISTS support_messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 
+-- 【テーブル定義】payment_methods はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS payment_methods (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -179,6 +202,7 @@ CREATE TABLE IF NOT EXISTS payment_methods (
 
 -- AI対話ページのスレッド情報です。
 -- 商品ごとのコメントとは別に、ユーザーが自由相談を話題ごとに保存できるようにします。
+-- 【テーブル定義】ai_chat_threads はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS ai_chat_threads (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -191,6 +215,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_threads (
 
 -- AI対話ページの発言履歴です。
 -- role=user はユーザー発言、role=assistant はAI回答を表し、notice/used_fallbackで外部AIフォールバック状態も残します。
+-- 【テーブル定義】ai_chat_messages はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS ai_chat_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   thread_id BIGINT NOT NULL,
@@ -218,6 +243,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
 -- フロントエンド src/formOptions.ts のプルダウン候補に存在する値だけを使っています。
 -- ============================================================
 
+-- 【デモデータ投入】users に初期データを入れ、ログイン直後からデモできる状態を作ります。
 INSERT INTO users (id, name, email, password_hash, balance_coins, sales_coins, rating_sum, rating_count, transaction_count, shipping_region, shipping_address) VALUES
   (1, 'user1', 'user1@example.com', '$2a$10$BE9RamaQzyRtrfg02DwGyuZzIEyamfWbmRyD0ywq6qvOsAUfM5azS', 500, 0, 0, 0, 0, '東京都', '東京都文京区本郷1-1-1'),
   (2, 'user2', 'user2@example.com', '$2a$10$SbJUqn4yuDsuBPTOeWsSY.Y9g50XsRI/IV6wkgE43y6QZyGjAdKFm', 1000, 0, 0, 0, 0, '千葉県', '千葉県千葉市中央区弁天1-1-1'),
@@ -225,6 +251,7 @@ INSERT INTO users (id, name, email, password_hash, balance_coins, sales_coins, r
   (4, 'user4', 'user4@example.com', '$2a$10$V3MIkZ/RZVdX2Q1YJT9wlOIBgO./YzVOIJIQr.tLlJuSJnvCW7NXi', 100000, 0, 0, 0, 0, '埼玉県', '埼玉県さいたま市浦和区高砂1-1-1')
 ON DUPLICATE KEY UPDATE name=VALUES(name), password_hash=VALUES(password_hash), balance_coins=VALUES(balance_coins), shipping_region=VALUES(shipping_region), shipping_address=VALUES(shipping_address);
 
+-- 【デモデータ投入】items に初期データを入れ、ログイン直後からデモできる状態を作ります。
 INSERT INTO items (id, product_code, seller_id, title, description, category, condition_text, price_yen, image_url, delivery_method, shipping_days, ship_from_region, size, color, tags, status) VALUES
   (1, 'DEMO-001', 1, '微分積分学の参考書', '大学初年級の微分積分を学び直せる参考書です。本文に数か所だけ鉛筆の書き込みがありますが、演習には問題なく使えます。', '本・教材', '目立った傷や汚れなし', 1200, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2RiZWFmZSIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5NYXRoIEJvb2s8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI3MiUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjI0IiBmaWxsPSIjNjQ3NDhiIj5ERU1PLTAwMSBpbWFnZSBBPC90ZXh0Pgo8L3N2Zz4=', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2YzZThmZiIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5NYXRoIEJvb2s8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI3MiUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjI0IiBmaWxsPSIjNjQ3NDhiIj5ERU1PLTAwMSBpbWFnZSBCPC90ZXh0Pgo8L3N2Zz4='), '配送のみ', 2, '東京都', '単行本', '白', '参考書,初学者向け,数学,大学受験', 'available'),
   (2, 'DEMO-002', 1, '線形代数の演習ノート', '授業内容を自分なりに整理した線形代数の演習ノートです。行列、固有値、ベクトル空間の復習に使いやすいです。', '本・教材', 'やや傷や汚れあり', 800, JSON_ARRAY('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2RjZmNlNyIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5MaW5lYXIgQWxnZWJyYTwvdGV4dD4KICA8dGV4dCB4PSI1MCUiIHk9IjcyJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjQiIGZpbGw9IiM2NDc0OGIiPkRFTU8tMDAyIGltYWdlIEE8L3RleHQ+Cjwvc3ZnPg==', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NDAiIGhlaWdodD0iNDIwIiB2aWV3Qm94PSIwIDAgNjQwIDQyMCI+CiAgPHJlY3Qgd2lkdGg9IjY0MCIgaGVpZ2h0PSI0MjAiIHJ4PSIyNCIgZmlsbD0iI2ZlZTJlMiIvPgogIDxyZWN0IHg9IjQyIiB5PSI0MiIgd2lkdGg9IjU1NiIgaGVpZ2h0PSIzMzYiIHJ4PSIyOCIgZmlsbD0id2hpdGUiIGZpbGwtb3BhY2l0eT0iMC44OCIvPgogIDx0ZXh0IHg9IjUwJSIgeT0iNDIlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsc2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MiIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzFmMjkzNyI+QUkgRmxlYSBNYXJrZXQ8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSI1OCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNDc1NTY5Ij5MaW5lYXIgQWxnZWJyYTwvdGV4dD4KICA8dGV4dCB4PSI1MCUiIHk9IjcyJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjQiIGZpbGw9IiM2NDc0OGIiPkRFTU8tMDAyIGltYWdlIEI8L3RleHQ+Cjwvc3ZnPg=='), '学内受け渡し', 1, '東京都', 'A4', '青', '線形代数,演習ノート,数学,大学', 'available'),

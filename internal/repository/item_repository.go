@@ -1,3 +1,13 @@
+// ============================================================
+// ファイル概要: hackathon-backend/internal/repository/item_repository.go
+// 役割: 商品、購入、チェックリスト、月別集計、AI販売改善通知など商品中心のDB処理を担当します。
+//
+// 読み方の目安:
+// 1. まずpackage/importを確認し、このファイルがどの層に属するかを把握します。
+// 2. type定義では、DB/API/画面で受け渡すデータの形を確認します。
+// 3. func定義では、入力検証、DB処理、AI呼び出し、レスポンス整形の順に読むと流れを追いやすくなります。
+//
+// ============================================================
 // Package repository の item_repository は、商品・購入・チェックリスト・推薦に関するDB操作を担当します。
 //
 // 購入や出品キャンセルなど、複数テーブルを同時に更新する処理はトランザクションで扱います。
@@ -14,8 +24,10 @@ import (
 	"hackathon-backend/internal/models"
 )
 
+// 【詳細コメント】ItemRepository は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 type ItemRepository struct{ DB *sql.DB }
 
+// 【詳細コメント】ItemFilter は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 type ItemFilter struct {
 	Query          string
 	Category       string
@@ -30,11 +42,17 @@ type ItemFilter struct {
 	DeliveryWithin string
 }
 
+// 【詳細コメント】scanItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func scanItem(scanner interface{ Scan(dest ...any) error }) (models.Item, error) {
+	// 【詳細コメント】item は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var item models.Item
+	// 【詳細コメント】productCode は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var productCode, imageURL, deliveryMethod, shipFromRegion, size, color, tags, buyerName, buyerAddress, purchaseStatus sql.NullString
+	// 【詳細コメント】buyerID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var buyerID, purchaseID sql.NullInt64
+	// 【詳細コメント】sellerRating は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var sellerRating sql.NullFloat64
+	// 【詳細コメント】purchaseCreatedAt は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var purchaseCreatedAt, shippingDeadline, shippedAt, completedAt sql.NullTime
 	err := scanner.Scan(
 		&item.ID, &productCode, &item.SellerID, &item.SellerName, &sellerRating, &item.SellerRatingCount, &item.SellerTransactionCount,
@@ -103,6 +121,7 @@ func scanItem(scanner interface{ Scan(dest ...any) error }) (models.Item, error)
 	return item, err
 }
 
+// 【詳細コメント】itemSelect は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func itemSelect() string {
 	return `SELECT i.id, i.product_code, i.seller_id, u.name,
                 CASE WHEN u.rating_count = 0 THEN 0 ELSE u.rating_sum / u.rating_count END AS seller_rating_average,
@@ -118,6 +137,7 @@ func itemSelect() string {
          LEFT JOIN users buyer ON buyer.id = p.buyer_id`
 }
 
+// 【詳細コメント】splitFilterValues は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func splitFilterValues(value string) []string {
 	parts := strings.Split(value, ",")
 	out := make([]string, 0, len(parts))
@@ -130,6 +150,7 @@ func splitFilterValues(value string) []string {
 	return out
 }
 
+// 【詳細コメント】addInFilter は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func addInFilter(query *string, args *[]any, column string, raw string) {
 	values := splitFilterValues(raw)
 	if len(values) == 0 {
@@ -142,6 +163,7 @@ func addInFilter(query *string, args *[]any, column string, raw string) {
 	}
 }
 
+// 【詳細コメント】normalizeKanaJP は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func normalizeKanaJP(value string) string {
 	// カタカナをひらがなに寄せます。
 	// 例: ギター -> ぎたー、タマネギ -> たまねぎ。
@@ -154,6 +176,7 @@ func normalizeKanaJP(value string) string {
 	return string(runes)
 }
 
+// 【詳細コメント】normalizeJP は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func normalizeJP(value string) string {
 	// DB検索でSQLだけに頼ると、漢字/ひらがな/カタカナの表記揺れを拾いにくくなります。
 	// 依存を増やさずに動かすため、代表的な語の読みを辞書化し、
@@ -174,6 +197,7 @@ func normalizeJP(value string) string {
 	return strings.ToLower(replacer.Replace(normalized))
 }
 
+// 【詳細コメント】levenshtein は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func levenshtein(a, b string) int {
 	ra, rb := []rune(a), []rune(b)
 	if len(ra) == 0 {
@@ -202,6 +226,7 @@ func levenshtein(a, b string) int {
 	return dp[len(ra)][len(rb)]
 }
 
+// 【詳細コメント】fuzzyMatchItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func fuzzyMatchItem(item models.Item, query string) bool {
 	q := normalizeJP(query)
 	if q == "" {
@@ -223,6 +248,7 @@ func fuzzyMatchItem(item models.Item, query string) bool {
 	return false
 }
 
+// 【詳細コメント】List は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) List(ctx context.Context, f ItemFilter, viewerID *int64) ([]models.Item, error) {
 	query := itemSelect() + ` WHERE i.status <> 'canceled'`
 	args := []any{}
@@ -297,6 +323,7 @@ func (r *ItemRepository) List(ctx context.Context, f ItemFilter, viewerID *int64
 	return items, rows.Err()
 }
 
+// 【詳細コメント】ListBySeller は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) ListBySeller(ctx context.Context, sellerID int64) ([]models.Item, error) {
 	rows, err := r.DB.QueryContext(ctx, itemSelect()+` WHERE i.seller_id = ? ORDER BY i.updated_at DESC`, sellerID)
 	if err != nil {
@@ -314,6 +341,7 @@ func (r *ItemRepository) ListBySeller(ctx context.Context, sellerID int64) ([]mo
 	return items, rows.Err()
 }
 
+// 【詳細コメント】Create は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) Create(ctx context.Context, sellerID int64, req models.CreateItemRequest) (models.Item, error) {
 	if req.DeliveryMethod == "" {
 		req.DeliveryMethod = "対面・配送相談"
@@ -343,6 +371,7 @@ func (r *ItemRepository) Create(ctx context.Context, sellerID int64, req models.
 	return r.FindByID(ctx, id)
 }
 
+// 【詳細コメント】Update は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) Update(ctx context.Context, itemID, sellerID int64, req models.UpdateItemRequest) (models.Item, error) {
 	if req.DeliveryMethod == "" {
 		req.DeliveryMethod = "対面・配送相談"
@@ -372,6 +401,7 @@ func (r *ItemRepository) Update(ctx context.Context, itemID, sellerID int64, req
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
+			// 【詳細コメント】uid は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 			var uid int64
 			if rows.Scan(&uid) == nil {
 				_, _ = r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, ?, ?)`, uid, itemID, "チェックリスト商品の更新", item.Title+" の商品情報が更新されました")
@@ -381,6 +411,7 @@ func (r *ItemRepository) Update(ctx context.Context, itemID, sellerID int64, req
 	return item, nil
 }
 
+// 【詳細コメント】Cancel は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) Cancel(ctx context.Context, itemID, sellerID int64) (models.Item, error) {
 	// 出品キャンセルは、商品状態の変更と通知作成を一つのトランザクションで行います。
 	// 途中で失敗した場合に「商品だけキャンセルされ、通知が残らない」という中途半端な状態を避けます。
@@ -392,7 +423,9 @@ func (r *ItemRepository) Cancel(ctx context.Context, itemID, sellerID int64) (mo
 
 	// 通知文に商品名を入れるため、更新前に対象商品をロックして取得します。
 	// FOR UPDATE により、同じ商品への同時キャンセルや購入処理との競合を防ぎます。
+	// 【詳細コメント】title は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var title string
+	// 【詳細コメント】status は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var status string
 	if err := tx.QueryRowContext(ctx, `SELECT title, status FROM items WHERE id=? AND seller_id=? FOR UPDATE`, itemID, sellerID).Scan(&title, &status); err != nil {
 		return models.Item{}, err
@@ -428,6 +461,7 @@ func (r *ItemRepository) Cancel(ctx context.Context, itemID, sellerID int64) (mo
 	}
 	checklistUserIDs := []int64{}
 	for rows.Next() {
+		// 【詳細コメント】uid は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var uid int64
 		if err := rows.Scan(&uid); err != nil {
 			rows.Close()
@@ -461,19 +495,25 @@ func (r *ItemRepository) Cancel(ctx context.Context, itemID, sellerID int64) (mo
 	return r.FindByID(ctx, itemID)
 }
 
+// 【詳細コメント】FindByID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) FindByID(ctx context.Context, id int64) (models.Item, error) {
 	return scanItem(r.DB.QueryRowContext(ctx, itemSelect()+` WHERE i.id = ?`, id))
 }
 
+// 【詳細コメント】Purchase は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) Purchase(ctx context.Context, itemID, buyerID int64, deliveryAddress string) (models.Purchase, error) {
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return models.Purchase{}, err
 	}
 	defer tx.Rollback()
+	// 【詳細コメント】sellerID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var sellerID int64
+	// 【詳細コメント】priceYen は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var priceYen, shippingDays, buyerBalance int
+	// 【詳細コメント】status は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var status string
+	// 【詳細コメント】title は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var title string
 	err = tx.QueryRowContext(ctx, `SELECT seller_id, price_yen, status, shipping_days, title FROM items WHERE id=? FOR UPDATE`, itemID).Scan(&sellerID, &priceYen, &status, &shippingDays, &title)
 	if err != nil {
@@ -485,6 +525,7 @@ func (r *ItemRepository) Purchase(ctx context.Context, itemID, buyerID int64, de
 	if status != "available" {
 		return models.Purchase{}, fmt.Errorf("この商品は購入できません")
 	}
+	// 【詳細コメント】blocked は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var blocked int
 	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blocked_users WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`, buyerID, sellerID, sellerID, buyerID).Scan(&blocked)
 	if err != nil {
@@ -532,7 +573,9 @@ func (r *ItemRepository) Purchase(ctx context.Context, itemID, buyerID int64, de
 	return models.Purchase{ID: purchaseID, ItemID: itemID, BuyerID: buyerID, SellerID: sellerID, PriceYen: priceYen, Status: "paid", DeliveryAddress: deliveryAddress, ShippingDeadline: deadline}, nil
 }
 
+// 【詳細コメント】Ship は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) Ship(ctx context.Context, itemID, sellerID int64) (models.Purchase, error) {
+	// 【詳細コメント】p は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var p models.Purchase
 	res, err := r.DB.ExecContext(ctx, `UPDATE purchases SET status='shipped', shipped_at=CURRENT_TIMESTAMP WHERE item_id=? AND seller_id=? AND status='paid'`, itemID, sellerID)
 	if err != nil {
@@ -548,6 +591,7 @@ func (r *ItemRepository) Ship(ctx context.Context, itemID, sellerID int64) (mode
 	return p, nil
 }
 
+// 【詳細コメント】Complete は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) Complete(ctx context.Context, itemID, buyerID int64, rating int, comment string) (models.Purchase, error) {
 	if rating < 1 || rating > 5 {
 		return models.Purchase{}, fmt.Errorf("評価は1〜5で入力してください")
@@ -557,6 +601,7 @@ func (r *ItemRepository) Complete(ctx context.Context, itemID, buyerID int64, ra
 		return models.Purchase{}, err
 	}
 	defer tx.Rollback()
+	// 【詳細コメント】p は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var p models.Purchase
 	err = tx.QueryRowContext(ctx, `SELECT id,item_id,buyer_id,seller_id,price_yen,status,delivery_address,created_at,shipping_deadline,shipped_at,completed_at FROM purchases WHERE item_id=? AND buyer_id=? FOR UPDATE`, itemID, buyerID).Scan(&p.ID, &p.ItemID, &p.BuyerID, &p.SellerID, &p.PriceYen, &p.Status, &p.DeliveryAddress, &p.CreatedAt, &p.ShippingDeadline, &p.ShippedAt, &p.CompletedAt)
 	if err != nil {
@@ -581,21 +626,27 @@ func (r *ItemRepository) Complete(ctx context.Context, itemID, buyerID int64, ra
 	return r.FindPurchaseByItem(ctx, itemID)
 }
 
+// 【詳細コメント】FindPurchaseByItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) FindPurchaseByItem(ctx context.Context, itemID int64) (models.Purchase, error) {
+	// 【詳細コメント】p は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var p models.Purchase
 	err := r.DB.QueryRowContext(ctx, `SELECT id,item_id,buyer_id,seller_id,price_yen,status,delivery_address,created_at,shipping_deadline,shipped_at,completed_at FROM purchases WHERE item_id=?`, itemID).Scan(&p.ID, &p.ItemID, &p.BuyerID, &p.SellerID, &p.PriceYen, &p.Status, &p.DeliveryAddress, &p.CreatedAt, &p.ShippingDeadline, &p.ShippedAt, &p.CompletedAt)
 	return p, err
 }
 
+// 【詳細コメント】ListPurchasesByBuyer は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) ListPurchasesByBuyer(ctx context.Context, buyerID int64) ([]models.PurchaseHistory, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT p.id, i.id, i.product_code, i.seller_id, u.name, CASE WHEN u.rating_count=0 THEN 0 ELSE u.rating_sum/u.rating_count END, u.rating_count, i.title, i.description, i.category, i.condition_text, p.price_yen, COALESCE(i.image_url,''), i.status, p.status, i.delivery_method, i.shipping_days, i.ship_from_region, p.delivery_address, p.created_at, p.shipping_deadline, p.shipped_at, p.completed_at, p.rating, COALESCE(p.rating_comment,'') FROM purchases p JOIN items i ON i.id=p.item_id JOIN users u ON u.id=i.seller_id WHERE p.buyer_id=? ORDER BY p.created_at DESC`, buyerID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	// 【詳細コメント】out は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var out []models.PurchaseHistory
 	for rows.Next() {
+		// 【詳細コメント】x は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var x models.PurchaseHistory
+		// 【詳細コメント】rating は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var rating sql.NullInt64
 		if err := rows.Scan(&x.PurchaseID, &x.ItemID, &x.ProductCode, &x.SellerID, &x.SellerName, &x.SellerRatingAverage, &x.SellerRatingCount, &x.Title, &x.Description, &x.Category, &x.ConditionText, &x.PriceYen, &x.ImageURL, &x.Status, &x.PurchaseStatus, &x.DeliveryMethod, &x.ShippingDays, &x.ShipFromRegion, &x.DeliveryAddress, &x.PurchasedAt, &x.ShippingDeadline, &x.ShippedAt, &x.CompletedAt, &rating, &x.RatingComment); err != nil {
 			return nil, err
@@ -609,6 +660,7 @@ func (r *ItemRepository) ListPurchasesByBuyer(ctx context.Context, buyerID int64
 	return out, rows.Err()
 }
 
+// 【詳細コメント】ListChecklist は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) ListChecklist(ctx context.Context, userID int64) ([]models.Item, error) {
 	// checklist に該当する商品が0件でも JSON では [] として扱いやすいよう、
 	// nil ではなく空スライスで初期化してから append する。
@@ -629,7 +681,9 @@ func (r *ItemRepository) ListChecklist(ctx context.Context, userID int64) ([]mod
 	return items, rows.Err()
 }
 
+// 【詳細コメント】IsInChecklist は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) IsInChecklist(ctx context.Context, userID, itemID int64) (bool, error) {
+	// 【詳細コメント】exists は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var exists int
 	err := r.DB.QueryRowContext(ctx, `SELECT 1 FROM checklist WHERE user_id=? AND item_id=?`, userID, itemID).Scan(&exists)
 	if err == sql.ErrNoRows {
@@ -637,15 +691,20 @@ func (r *ItemRepository) IsInChecklist(ctx context.Context, userID, itemID int64
 	}
 	return err == nil, err
 }
+
+// 【詳細コメント】AddChecklist は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) AddChecklist(ctx context.Context, userID, itemID int64) error {
 	_, err := r.DB.ExecContext(ctx, `INSERT IGNORE INTO checklist (user_id,item_id,last_seen_updated_at) SELECT ?, id, updated_at FROM items WHERE id=?`, userID, itemID)
 	return err
 }
+
+// 【詳細コメント】RemoveChecklist は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) RemoveChecklist(ctx context.Context, userID, itemID int64) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM checklist WHERE user_id=? AND item_id=?`, userID, itemID)
 	return err
 }
 
+// 【詳細コメント】Recommend は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) Recommend(ctx context.Context, userID int64) ([]models.Item, error) {
 	items := []models.Item{}
 	rows, err := r.DB.QueryContext(ctx, itemSelect()+` WHERE i.status='available' AND i.seller_id<>? AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.blocker_id=? AND b.blocked_id=i.seller_id) OR (b.blocker_id=i.seller_id AND b.blocked_id=?)) ORDER BY checklist_count DESC, i.updated_at DESC LIMIT 8`, userID, userID, userID)
@@ -666,6 +725,7 @@ func (r *ItemRepository) Recommend(ctx context.Context, userID int64) ([]models.
 // SimilarPriceStats は、同カテゴリ商品の価格分布を取得します。
 // AI価格アドバイスでは、外部データや重いML推論が使えない場合でも、
 // 現在アプリ内に存在する類似出品の中央値・件数を用いて価格感を説明します。
+// 【詳細コメント】SimilarPriceStats は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) SimilarPriceStats(ctx context.Context, category string, excludeID int64) (count int, min int, max int, avg float64, err error) {
 	row := r.DB.QueryRowContext(ctx, `
         SELECT COUNT(*), COALESCE(MIN(price_yen),0), COALESCE(MAX(price_yen),0), COALESCE(AVG(price_yen),0)
@@ -681,6 +741,7 @@ func (r *ItemRepository) SimilarPriceStats(ctx context.Context, category string,
 // 本番ではCloud SchedulerやCloud Tasksで定期実行するのが自然ですが、
 // ハッカソンのローカル・Cloud Runデモではサーバ起動時と簡易tickerで動く方が確認しやすいため、
 // main.goからこの関数を定期的に呼びます。
+// 【詳細コメント】CreateStaleListingAdviceNotifications は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *ItemRepository) CreateStaleListingAdviceNotifications(ctx context.Context, days int) (int, error) {
 	if days <= 0 {
 		days = 7
@@ -722,10 +783,15 @@ func (r *ItemRepository) CreateStaleListingAdviceNotifications(ctx context.Conte
 
 	created := 0
 	for rows.Next() {
+		// 【詳細コメント】itemID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var itemID, sellerID int64
+		// 【詳細コメント】title は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var title, category, size, tags string
+		// 【詳細コメント】priceYen は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var priceYen int
+		// 【詳細コメント】updatedAt は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var updatedAt time.Time
+		// 【詳細コメント】completedAvgPrice は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var completedAvgPrice float64
 		if err := rows.Scan(&itemID, &sellerID, &title, &category, &priceYen, &size, &tags, &updatedAt, &completedAvgPrice); err != nil {
 			return created, err
@@ -739,6 +805,7 @@ func (r *ItemRepository) CreateStaleListingAdviceNotifications(ctx context.Conte
 	return created, rows.Err()
 }
 
+// 【詳細コメント】buildStaleListingAdviceBody は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func buildStaleListingAdviceBody(title, category string, priceYen int, size, tags string, completedAvgPrice float64) string {
 	// MerRecのようなC2Cデータでよく効く「購入前の不安解消」「検索語の補強」「価格調整」を、
 	// 商品カテゴリ・現在価格・成約平均価格から説明可能な形で通知します。
@@ -763,6 +830,7 @@ func buildStaleListingAdviceBody(title, category string, priceYen int, size, tag
 	return fmt.Sprintf("「%s」は7日以上Availableのままです。MerRec風の過去取引分析では、%s", strings.TrimSpace(title), strings.Join(advice, " "))
 }
 
+// 【詳細コメント】staleCategoryHints は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func staleCategoryHints(category string) []string {
 	c := strings.TrimSpace(category)
 	switch {
@@ -779,6 +847,7 @@ func staleCategoryHints(category string) []string {
 	}
 }
 
+// 【詳細コメント】BuildFilterFromQuery は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func BuildFilterFromQuery(values map[string][]string) ItemFilter {
 	get := func(k string) string {
 		if len(values[k]) == 0 {
