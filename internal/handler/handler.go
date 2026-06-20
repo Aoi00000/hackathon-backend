@@ -2,12 +2,10 @@
 // ファイル概要: hackathon-backend/internal/handler/handler.go
 // 役割: HTTPリクエストを受け取り、入力検証、認証ユーザー確認、repository/AI層の呼び出し、JSONレスポンス化を行います。
 //
-// 読み方の目安:
-// 1. まずpackage/importを確認し、このファイルがどの層に属するかを把握します。
-// 2. type定義では、DB/API/画面で受け渡すデータの形を確認します。
-// 3. func定義では、入力検証、DB処理、AI呼び出し、レスポンス整形の順に読むと流れを追いやすくなります。
-//
 // ============================================================
+// 実装詳細メモ:
+// HTTP APIの入口として、認証確認、入力検証、Repository呼び出し、AI呼び出し、JSONレスポンスをつなぎます。
+// DB更新の詳細はRepositoryへ寄せ、ここではステータスコードとユーザー向けエラーメッセージを決めます。
 // Package handler は、HTTPリクエストを受け取り、入力検証、Repository呼び出し、レスポンス生成を行います。
 //
 // このファイルには、ハッカソンの主要機能である認証、商品、購入、コメント、通知、AI機能、自然言語検索が集約されています。
@@ -36,7 +34,7 @@ import (
 	"hackathon-backend/internal/repository"
 )
 
-// 【詳細コメント】Handler は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// Handler は、HTTPリクエストを受け取り、入力検証、認証ユーザー確認、repository/AI層の呼び出し、JSONレスポンス化を行います。
 type Handler struct {
 	Config   config.Config
 	Users    repository.UserRepository
@@ -46,7 +44,7 @@ type Handler struct {
 	AI       *ai.Client
 }
 
-// 【詳細コメント】New は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// New は、Handlerを作成する関数です。ConfigとDB接続を受け取り、各RepositoryとAIクライアントを初期化します。
 func New(cfg config.Config, database *sql.DB) *Handler {
 	return &Handler{
 		Config:   cfg,
@@ -58,7 +56,7 @@ func New(cfg config.Config, database *sql.DB) *Handler {
 	}
 }
 
-// 【詳細コメント】optionalUserID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// optionalUserID は、リクエストにJWTが含まれていればユーザーIDを返し、なければnilを返します。
 func (h *Handler) optionalUserID(r *http.Request) *int64 {
 	id, err := auth.UserIDFromRequest(r, h.Config.JWTSecret)
 	if err != nil {
@@ -67,9 +65,8 @@ func (h *Handler) optionalUserID(r *http.Request) *int64 {
 	return &id
 }
 
-// 【詳細コメント】Register は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// register は、ユーザー登録APIのエンドポイントです。JSONで名前、メールアドレス、パスワードを受け取り、新規ユーザーを作成します。
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.RegisterRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -99,9 +96,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, models.AuthResponse{Token: token, User: user})
 }
 
-// 【詳細コメント】Login は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// Login は、ユーザーログインAPIのエンドポイントです。JSONでメールアドレスとパスワードを受け取り、認証に成功すればJWTを返します。
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.LoginRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -124,7 +120,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, models.AuthResponse{Token: token, User: user})
 }
 
-// 【詳細コメント】Me は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// Me は、ログイン中のユーザー情報を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからユーザー情報を返します。
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -139,14 +135,13 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, user)
 }
 
-// 【詳細コメント】UpdateMe は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// UpdateMe は、ログイン中のユーザー情報を更新するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBのユーザー情報を更新します。
 func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.UpdateProfileRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -166,14 +161,13 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, user)
 }
 
-// 【詳細コメント】Charge は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// Charge は、ユーザーの残高をチャージするAPIのエンドポイントです。JWTからユーザーIDを取得し、DBのユーザー残高を更新します。
 func (h *Handler) Charge(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.ChargeRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -187,7 +181,7 @@ func (h *Handler) Charge(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, user)
 }
 
-// 【詳細コメント】ListItems は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// listItems は、商品一覧を返すAPIのエンドポイントです。クエリパラメータでフィルタリングが可能です。
 func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	filter := repository.BuildFilterFromQuery(r.URL.Query())
 	items, err := h.Items.List(r.Context(), filter, h.optionalUserID(r))
@@ -198,7 +192,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, items)
 }
 
-// 【詳細コメント】ListMyItems は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// listMyItems は、ログイン中のユーザーが出品した商品一覧を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBから出品商品を取得します。
 func (h *Handler) ListMyItems(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -213,7 +207,7 @@ func (h *Handler) ListMyItems(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, items)
 }
 
-// 【詳細コメント】trimItemRequest は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// trimItemRequest は、CreateItemRequestの各フィールドの前後の空白を削除します。
 func trimItemRequest(req *models.CreateItemRequest) {
 	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)
@@ -227,7 +221,7 @@ func trimItemRequest(req *models.CreateItemRequest) {
 	req.Tags = strings.TrimSpace(req.Tags)
 }
 
-// 【詳細コメント】validateItemRequest は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// validateItemRequest は、CreateItemRequestの各フィールドのバリデーションを行います。必須項目が空でないか、価格が1円以上かなどをチェックします。
 func validateItemRequest(req models.CreateItemRequest) error {
 	if req.Title == "" || req.Description == "" || req.Category == "" || req.ConditionText == "" || req.PriceYen <= 0 {
 		return fmt.Errorf("商品名、説明、カテゴリ、状態、1円以上の価格を入力してください")
@@ -244,14 +238,13 @@ func validateItemRequest(req models.CreateItemRequest) error {
 	return nil
 }
 
-// 【詳細コメント】CreateItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// createItem は、商品を新規作成するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBに新しい商品を作成します。
 func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.CreateItemRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -270,7 +263,7 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, item)
 }
 
-// 【詳細コメント】UpdateItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// updateItem は、商品情報を更新するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBの既存商品情報を更新します。
 func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -282,7 +275,6 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.CreateItemRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -301,7 +293,7 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, item)
 }
 
-// 【詳細コメント】CancelItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// cancelItem は、商品をキャンセルするAPIのエンドポイントです。JWTからユーザーIDを取得し、DBの既存商品情報をキャンセル状態に更新します。
 func (h *Handler) CancelItem(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -321,7 +313,7 @@ func (h *Handler) CancelItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, item)
 }
 
-// 【詳細コメント】GetItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// getItem は、商品詳細を返すAPIのエンドポイントです。商品IDをパスから取得し、DBから商品情報を取得します。
 func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := parseIDFromPath(r.URL.Path, "/api/items/")
 	if !ok {
@@ -342,7 +334,7 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, item)
 }
 
-// 【詳細コメント】PurchaseItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// purchaseItem は、商品を購入するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBの既存商品情報を購入済みに更新します。
 func (h *Handler) PurchaseItem(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -354,7 +346,6 @@ func (h *Handler) PurchaseItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.PurchaseRequest
 	_ = httpx.DecodeJSON(r, &req)
 	purchase, err := h.Items.Purchase(r.Context(), itemID, userID, strings.TrimSpace(req.DeliveryAddress))
@@ -365,7 +356,7 @@ func (h *Handler) PurchaseItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, purchase)
 }
 
-// 【詳細コメント】ShipItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// shipItem は、商品を発送するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBの既存商品情報を発送済みに更新します。
 func (h *Handler) ShipItem(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -385,7 +376,7 @@ func (h *Handler) ShipItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
-// 【詳細コメント】CompleteItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// completeItem は、商品を購入完了するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBの既存商品情報を購入完了済みに更新します。
 func (h *Handler) CompleteItem(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -397,7 +388,6 @@ func (h *Handler) CompleteItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.CompletePurchaseRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -411,7 +401,7 @@ func (h *Handler) CompleteItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
-// 【詳細コメント】ListPurchaseHistory は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListPurchaseHistory は、ログイン中のユーザーの購入履歴を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBから購入履歴を取得します。
 func (h *Handler) ListPurchaseHistory(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -426,7 +416,7 @@ func (h *Handler) ListPurchaseHistory(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, history)
 }
 
-// 【詳細コメント】ListChecklist は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// listchecklist は、ログイン中のユーザーのチェックリストを返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからチェックリストを取得します。
 func (h *Handler) ListChecklist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -441,7 +431,7 @@ func (h *Handler) ListChecklist(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, items)
 }
 
-// 【詳細コメント】GetChecklistStatus は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// GetChecklistStatus は、ログイン中のユーザーのチェックリスト状態を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからチェックリスト状態を取得します。
 func (h *Handler) GetChecklistStatus(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -461,7 +451,7 @@ func (h *Handler) GetChecklistStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, models.ChecklistStatus{Checked: checked})
 }
 
-// 【詳細コメント】AddChecklist は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// addChecklist は、ログイン中のユーザーのチェックリストに商品を追加するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBにチェックリスト状態を追加します。
 func (h *Handler) AddChecklist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -489,7 +479,7 @@ func (h *Handler) AddChecklist(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, models.ChecklistStatus{Checked: true})
 }
 
-// 【詳細コメント】RemoveChecklist は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// removeChecklist は、ログイン中のユーザーのチェックリストから商品を削除するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからチェックリスト状態を削除します。
 func (h *Handler) RemoveChecklist(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -508,9 +498,8 @@ func (h *Handler) RemoveChecklist(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, models.ChecklistStatus{Checked: false})
 }
 
-// 【詳細コメント】GenerateDescription は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// GenerateDescription は、商品説明文をAIで生成するAPIのエンドポイントです。JSONで商品名、カテゴリ、状態、キーワードを受け取り、AIで説明文を生成して返します。
 func (h *Handler) GenerateDescription(w http.ResponseWriter, r *http.Request) {
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.GenerateDescriptionRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -529,7 +518,7 @@ func (h *Handler) GenerateDescription(w http.ResponseWriter, r *http.Request) {
 	// 失敗時は商品情報からローカルの説明文を作って返します。
 	text, notice, usedFallback, err := h.AI.GenerateTextWithFallback(
 		ai.BuildDescriptionPrompt(req.Title, req.Category, req.ConditionText, req.Keywords),
-		// 【詳細コメント】この宣言 は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+		// stringを返す関数を渡すことで、外部AIが失敗した場合にローカルで説明文を生成する処理を遅延評価できます。
 		func() string { return ai.FallbackDescription(req.Title, req.Category, req.ConditionText, req.Keywords) },
 	)
 	if err != nil {
@@ -540,14 +529,13 @@ func (h *Handler) GenerateDescription(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text, Notice: notice, UsedFallback: usedFallback})
 }
 
-// 【詳細コメント】AskItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// AskItem は、商品に関する質問をAIで回答するAPIのエンドポイントです。JSONで質問を受け取り、AIで回答を生成して返します。
 func (h *Handler) AskItem(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := parseIDFromPath(strings.TrimSuffix(r.URL.Path, "/ask"), "/api/items/")
 	if !ok {
 		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.AskItemRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -567,7 +555,6 @@ func (h *Handler) AskItem(w http.ResponseWriter, r *http.Request) {
 	// 商品説明に基づくローカル回答へフォールバックするため、デモ時にも安定して動きます。
 	text, notice, usedFallback, err := h.AI.GenerateTextWithFallback(
 		ai.BuildItemQAPrompt(item.Title, item.Description, item.Category, item.ConditionText, req.Question),
-		// 【詳細コメント】この宣言 は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		func() string {
 			return ai.FallbackItemQA(item.Title, item.Description, item.Category, item.ConditionText, req.Question)
 		},
@@ -580,7 +567,7 @@ func (h *Handler) AskItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text, Notice: notice, UsedFallback: usedFallback})
 }
 
-// 【詳細コメント】GenerateNegotiationAssist は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// GenerateNegotiationAssist は、価格交渉アシスタントをAIで生成するAPIのエンドポイントです。
 func (h *Handler) GenerateNegotiationAssist(w http.ResponseWriter, r *http.Request) {
 	// 価格交渉アシスタントは、商品詳細ページの「公開コメント」と「非公開DM」の間に配置するAI機能です。
 	// 値下げ交渉はC2C取引で感情的摩擦が起きやすいため、商品情報・希望金額・公開コメントの文脈から、
@@ -595,7 +582,6 @@ func (h *Handler) GenerateNegotiationAssist(w http.ResponseWriter, r *http.Reque
 		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.PriceNegotiationRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -641,7 +627,7 @@ func (h *Handler) GenerateNegotiationAssist(w http.ResponseWriter, r *http.Reque
 	httpx.WriteJSON(w, http.StatusOK, models.AITextResponse{Text: text, Notice: notice, UsedFallback: usedFallback})
 }
 
-// 【詳細コメント】ListMessages は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListMessages は、商品に関する公開コメント一覧を返すAPIのエンドポイントです。商品IDをパスから取得し、DBからコメント一覧を取得します。
 func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := parseIDFromPath(strings.TrimSuffix(r.URL.Path, "/messages"), "/api/items/")
 	if !ok {
@@ -656,7 +642,7 @@ func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, messages)
 }
 
-// 【詳細コメント】CreateMessage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// CreateMessage は、商品に関する公開コメントを作成するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBに新しいコメントを作成します。
 func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -668,7 +654,6 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.CreateMessageRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -687,7 +672,7 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, msg)
 }
 
-// 【詳細コメント】ListPrivateMessages は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListPrivateMessages は、商品に関する非公開DM一覧を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからDM一覧を取得します。
 func (h *Handler) ListPrivateMessages(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -707,7 +692,7 @@ func (h *Handler) ListPrivateMessages(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, msgs)
 }
 
-// 【詳細コメント】CreatePrivateMessage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// CreatePrivateMessage は、商品に関する非公開DMを作成するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBに新しいDMを作成します。
 func (h *Handler) CreatePrivateMessage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -719,7 +704,6 @@ func (h *Handler) CreatePrivateMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.CreatePrivateMessageRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -738,7 +722,7 @@ func (h *Handler) CreatePrivateMessage(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, msg)
 }
 
-// 【詳細コメント】ListNotifications は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListNotifications は、ログイン中のユーザーの通知一覧を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBから通知一覧を取得します。
 func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -753,7 +737,7 @@ func (h *Handler) ListNotifications(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, data)
 }
 
-// 【詳細コメント】ReadNotification は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ReadNotification は、ログイン中のユーザーの通知を既読にするAPIのエンドポイントです。JWTからユーザーIDを取得し、DBの通知を既読に更新します。
 func (h *Handler) ReadNotification(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -774,7 +758,7 @@ func (h *Handler) ReadNotification(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, n)
 }
 
-// 【詳細コメント】ListSavedSearches は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListSavedSearches は、ログイン中のユーザーの保存検索一覧を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBから保存検索一覧を取得します。
 func (h *Handler) ListSavedSearches(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -789,14 +773,13 @@ func (h *Handler) ListSavedSearches(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, data)
 }
 
-// 【詳細コメント】SaveSearch は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// SaveSearch は、ログイン中のユーザーの保存検索を作成するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBに新しい保存検索を作成します。
 func (h *Handler) SaveSearch(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.SaveSearchRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -810,7 +793,7 @@ func (h *Handler) SaveSearch(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, s)
 }
 
-// 【詳細コメント】DeleteSavedSearch は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// DeleteSavedSearch は、ログイン中のユーザーの保存検索を削除するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBから保存検索を削除します。
 func (h *Handler) DeleteSavedSearch(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -829,14 +812,13 @@ func (h *Handler) DeleteSavedSearch(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// 【詳細コメント】BlockUser は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// blockUser は、ログイン中のユーザーが他のユーザーをブロックするAPIのエンドポイントです。JWTからユーザーIDを取得し、DBにブロック情報を作成します。
 func (h *Handler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.BlockUserRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -849,7 +831,7 @@ func (h *Handler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// 【詳細コメント】ListBlockedUsers は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListBlockedUsers は、ログイン中のユーザーのブロック一覧を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからブロック一覧を取得します。
 func (h *Handler) ListBlockedUsers(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -864,7 +846,7 @@ func (h *Handler) ListBlockedUsers(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, data)
 }
 
-// 【詳細コメント】UnblockUser は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// UnblockUser は、ログイン中のユーザーが他のユーザーのブロックを解除するAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからブロック情報を削除します。
 func (h *Handler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -883,7 +865,7 @@ func (h *Handler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// 【詳細コメント】ListSupportMessages は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListSupportMessages は、ログイン中のユーザーのサポートメッセージ一覧を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからサポートメッセージ一覧を取得します。
 func (h *Handler) ListSupportMessages(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -898,14 +880,13 @@ func (h *Handler) ListSupportMessages(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, data)
 }
 
-// 【詳細コメント】SendSupportMessage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// SendSupportMessage は、ログイン中のユーザーが運営に問い合わせるAPIのエンドポイントです。JWTからユーザーIDを取得し、DBに新しいサポートメッセージを作成します。
 func (h *Handler) SendSupportMessage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.SupportMessageRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -925,7 +906,7 @@ func (h *Handler) SendSupportMessage(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, msg)
 }
 
-// 【詳細コメント】Recommend は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// Recommend は、ログイン中のユーザーにおすすめ商品を返すAPIのエンドポイントです。JWTからユーザーIDを取得し、DBからおすすめ商品一覧を取得します。
 func (h *Handler) Recommend(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -939,7 +920,7 @@ func (h *Handler) Recommend(w http.ResponseWriter, r *http.Request) {
 	}
 	reason := "同じC2Cマーケットでの閲覧・いいね・購入に近いシグナルを想定し、チェックリスト数、新着度、価格帯をもとに提示しています。"
 	if len(items) > 0 {
-		// 【詳細コメント】b は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+		// AIによる推薦理由を生成します。ユーザー名と商品一覧をプロンプトに渡し、自然言語での推薦理由を生成します。
 		var b strings.Builder
 		for _, it := range items {
 			fmt.Fprintf(&b, "- %s / %s / %d円\n", it.Title, it.Category, it.PriceYen)
@@ -953,7 +934,7 @@ func (h *Handler) Recommend(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, models.RecommendationResponse{Reason: reason, Items: items})
 }
 
-// 【詳細コメント】categoryReviewHints は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// categoryReviewHints は、カテゴリごとに購入者がレビューで気にしやすい観点を返す関数です。将来的にMLモデルを読み込む場合も、この関数を差し替えればUIは変更せずに済みます。
 func categoryReviewHints(category string) []string {
 	// MerRecのようなC2C取引データで本格学習したモデルが未配置の場合でも、
 	// カテゴリごとに購入者がレビューで気にしやすい観点を返します。
@@ -976,7 +957,7 @@ func categoryReviewHints(category string) []string {
 	}
 }
 
-// 【詳細コメント】splitBullets は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// splitBullets は、AIが生成した文章から、指定されたセクションの箇条書き部分を抽出する関数です。
 func splitBullets(text string, section string) []string {
 	lines := strings.Split(text, "\n")
 	out := []string{}
@@ -1003,7 +984,7 @@ func splitBullets(text string, section string) []string {
 	return out
 }
 
-// 【詳細コメント】heuristicItemAnalysis は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// heuristicItemAnalysis は、商品情報をもとに、AIが生成した文章を解析して、リスク、不安点、質問候補、不整合の箇条書きを抽出する関数です。
 func heuristicItemAnalysis(item models.Item, priceInsight string) models.ItemAIAnalysisResponse {
 	risks := []string{}
 	questions := []string{}
@@ -1044,9 +1025,7 @@ func heuristicItemAnalysis(item models.Item, priceInsight string) models.ItemAIA
 // ParseNaturalSearch は、商品一覧トップの「生成AIを活用した自然言語検索」を処理します。
 // 役割は、ユーザーが普段の言葉で入力した検索意図を、既存の商品検索フォームと同じパラメータへ変換することです。
 // Gemini / Vertex AI が使える場合は外部AIで柔軟に解釈し、429や認証未設定のときはローカル規則で最低限動かします。
-// 【詳細コメント】ParseNaturalSearch は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (h *Handler) ParseNaturalSearch(w http.ResponseWriter, r *http.Request) {
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.NaturalSearchRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -1095,7 +1074,6 @@ func (h *Handler) ParseNaturalSearch(w http.ResponseWriter, r *http.Request) {
 
 // buildNaturalSearchPrompt は、自然言語検索の入力を検索パラメータJSONに変換するためのプロンプトを作ります。
 // フロントエンドのプルダウン候補と完全に対応する値だけを使わせることで、AIの出力揺れを抑えます。
-// 【詳細コメント】buildNaturalSearchPrompt は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func buildNaturalSearchPrompt(query string) string {
 	return fmt.Sprintf(`あなたは日本語フリマアプリの商品検索アシスタントです。
 ユーザーの自然言語検索を、既存の商品検索フォームに入れるJSONへ変換してください。
@@ -1139,7 +1117,6 @@ JSON形式:
 
 // parseNaturalSearchJSON は、Gemini / Vertex AI から返ったテキストからJSON部分を取り出して構造体にします。
 // AIが誤って```json ... ```を付ける場合があるため、最初の{から最後の}までを抽出してからdecodeします。
-// 【詳細コメント】parseNaturalSearchJSON は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func parseNaturalSearchJSON(text string) (models.NaturalSearchResponse, error) {
 	text = strings.TrimSpace(text)
 	start := strings.Index(text, "{")
@@ -1148,7 +1125,6 @@ func parseNaturalSearchJSON(text string) (models.NaturalSearchResponse, error) {
 		return models.NaturalSearchResponse{}, fmt.Errorf("json object not found")
 	}
 	jsonText := text[start : end+1]
-	// 【詳細コメント】result は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var result models.NaturalSearchResponse
 	if err := json.Unmarshal([]byte(jsonText), &result); err != nil {
 		return models.NaturalSearchResponse{}, err
@@ -1158,7 +1134,6 @@ func parseNaturalSearchJSON(text string) (models.NaturalSearchResponse, error) {
 
 // parseNaturalSearchLocally は、外部AIが使えないときの簡易自然言語検索です。
 // 完全な自然言語理解ではありませんが、デモでよく使う「予算」「きれい」「安い順」などを確実に拾います。
-// 【詳細コメント】parseNaturalSearchLocally は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func parseNaturalSearchLocally(query string) models.NaturalSearchResponse {
 	q := strings.TrimSpace(query)
 	lower := strings.ToLower(q)
@@ -1258,7 +1233,9 @@ func parseNaturalSearchLocally(query string) models.NaturalSearchResponse {
 	return normalizeNaturalSearchResponse(res)
 }
 
-// 【詳細コメント】normalizeNaturalSearchResponse は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// normalizeNaturalSearchResponse は、AIまたはローカル規則が作った検索条件をAPIで安全に使える形へ整えます。
+// 初学者向けに言うと、ここは「AIの出力をそのまま信じず、検索フォームに入れられる値へ掃除する場所」です。
+// 価格は数字だけにし、余計なカンマや空白を消し、並び替えが空ならrecommendedへ戻します。
 func normalizeNaturalSearchResponse(res models.NaturalSearchResponse) models.NaturalSearchResponse {
 	res.Q = strings.TrimSpace(res.Q)
 	res.Category = strings.Trim(strings.TrimSpace(res.Category), ",")
@@ -1275,7 +1252,9 @@ func normalizeNaturalSearchResponse(res models.NaturalSearchResponse) models.Nat
 	return res
 }
 
-// 【詳細コメント】extractPriceRangeFromJapanese は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// extractPriceRangeFromJapanese は、日本語の自然言語検索で入力された価格範囲を抽出する関数です。
+// 返り値は minPrice, maxPrice の順です。どちらも取れない場合は 0, 0 を返します。
+// Web APIではクエリパラメータは文字列で来ますが、検索処理では数値比較したいので、ここで整数へ変換します。
 func extractPriceRangeFromJapanese(text string) (int, int) {
 	// 日本語の自然言語検索では、「300円 ~ 1500円」「300円〜1500円」
 	// 「300-1500円」のように、範囲指定がさまざまな表記で入力されます。
@@ -1302,7 +1281,8 @@ func extractPriceRangeFromJapanese(text string) (int, int) {
 	return 0, 0
 }
 
-// 【詳細コメント】extractMaxPriceFromJapanese は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// extractMaxPriceFromJapanese は、「1万円以内」「500円まで」のような上限価格を読み取ります。
+// 「万」が含まれる表現は10000倍し、最終的に itemApi の maxPrice と同じ単位である円にそろえます。
 func extractMaxPriceFromJapanese(text string) int {
 	patterns := []string{`([0-9０-９]+)\s*万\s*円?\s*(以内|以下|まで|未満)?`, `([0-9０-９,]+)\s*円\s*(以内|以下|まで|未満)`}
 	for _, pattern := range patterns {
@@ -1319,7 +1299,8 @@ func extractMaxPriceFromJapanese(text string) int {
 	return 0
 }
 
-// 【詳細コメント】extractMinPriceFromJapanese は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// extractMinPriceFromJapanese は、「500円以上」「1000円から」のような下限価格を読み取ります。
+// 価格範囲の抽出とは分けておくことで、「以上」だけの検索文にも対応できます。
 func extractMinPriceFromJapanese(text string) int {
 	re := regexp.MustCompile(`([0-9０-９,]+)\s*円\s*(以上|から)`)
 	m := re.FindStringSubmatch(text)
@@ -1329,16 +1310,18 @@ func extractMinPriceFromJapanese(text string) int {
 	return 0
 }
 
-// 【詳細コメント】japaneseNumberToInt は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// japaneseNumberToInt は、全角数字やカンマ入り価格をGoのintへ変換します。
+// 例: 「１,５００」-> 1500。自然言語検索ではユーザーが半角/全角を混ぜて入力するため、この正規化が必要です。
 func japaneseNumberToInt(text string) int {
 	text = strings.NewReplacer("０", "0", "１", "1", "２", "2", "３", "3", "４", "4", "５", "5", "６", "6", "７", "7", "８", "8", "９", "9", ",", "").Replace(text)
 	value, _ := strconv.Atoi(digitsOnly(text))
 	return value
 }
 
-// 【詳細コメント】digitsOnly は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// digitsOnly は、文字列から数字だけを抽出する関数です。
+// 例: 「¥1,200」「1200円」「価格: 1200」などを、検索APIへ渡しやすい "1200" にします。
 func digitsOnly(text string) string {
-	// 【詳細コメント】b は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+	// 文字列から数字だけを抽出します。例えば「1,000円」や「￥5000」などの表記から、数字だけを取り出します。
 	var b strings.Builder
 	for _, r := range text {
 		if r >= '0' && r <= '9' {
@@ -1348,7 +1331,9 @@ func digitsOnly(text string) string {
 	return b.String()
 }
 
-// 【詳細コメント】joinNonEmpty は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// joinNonEmpty は、カンマ区切りの検索条件を重複なしで結合します。
+// 自然言語検索では「新品できれいなもの」のように複数の状態語が同時に出るため、
+// "新品・未使用,未使用に近い" のような検索フォーム用文字列を安全に作る必要があります。
 func joinNonEmpty(existing, add string) string {
 	parts := []string{}
 	for _, value := range strings.Split(existing+","+add, ",") {
@@ -1360,7 +1345,8 @@ func joinNonEmpty(existing, add string) string {
 	return strings.Join(parts, ",")
 }
 
-// 【詳細コメント】containsString は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// containsString は、文字列スライスに同じ値がすでに入っているか確認します。
+// Go標準ライブラリだけで書いている小さな補助関数で、検索カテゴリや状態の重複登録を避けるために使います。
 func containsString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
@@ -1370,7 +1356,9 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-// 【詳細コメント】cleanupNaturalSearchKeyword は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// cleanupNaturalSearchKeyword は、自然言語検索文から価格・助詞・操作語を取り除き、純粋なキーワードだけを残します。
+// たとえば「予算1500円以内で参考書を探して」は、価格条件を別で抽出した後、q="参考書" として商品一覧APIへ渡します。
+// 長すぎるキーワードは検索精度と表示の両方に悪影響があるため、24文字で切っています。
 func cleanupNaturalSearchKeyword(text string) string {
 	replacers := []string{"予算", "以内", "以下", "まで", "安い順", "高い順", "並べて", "探して", "検索", "使用感が少なくて", "使用感が少ない", "きれいな", "綺麗な", "もの", "商品", "ください", "して", "で", "を", "に", "が", "の", "~", "〜", "－", "-"}
 	cleaned := text
@@ -1388,14 +1376,20 @@ func cleanupNaturalSearchKeyword(text string) string {
 	return cleaned
 }
 
-// 【詳細コメント】CategoryKnowledge は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// CategoryKnowledge は、出品フォームでカテゴリを選んだときに「購入者が気にしやすい確認点」を返します。
+// DBを更新しない読み取り専用APIなので、ログイン必須にはしていません。
+// 将来MerRec由来のカテゴリ分析モデルを入れる場合も、レスポンス形式を保てばフロント側はそのまま使えます。
 func (h *Handler) CategoryKnowledge(w http.ResponseWriter, r *http.Request) {
 	category := strings.TrimSpace(r.URL.Query().Get("category"))
 	httpx.WriteJSON(w, http.StatusOK, models.CategoryKnowledgeResponse{Category: category, Tips: categoryReviewHints(category)})
 }
 
-// 【詳細コメント】AnalyzeItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// AnalyzeItem は、商品詳細ページの「購入前チェック」カードへ表示するAI分析を返します。
+// まずルールベースのheuristicItemAnalysisで必ず結果を作り、その後AIが使える場合だけ内容を上書きします。
+// こうすることで、Gemini/Vertex AIの認証や利用枠に問題があっても、商品詳細ページの重要機能は失われません。
 func (h *Handler) AnalyzeItem(w http.ResponseWriter, r *http.Request) {
+	// 商品詳細URLの末尾は /analysis なので、それを外してから商品IDを取り出します。
+	// 例: /api/items/1000/analysis -> itemID=1000
 	itemID, ok := parseIDFromPath(strings.TrimSuffix(r.URL.Path, "/analysis"), "/api/items/")
 	if !ok {
 		httpx.WriteError(w, http.StatusBadRequest, "商品IDが正しくありません")
@@ -1406,7 +1400,13 @@ func (h *Handler) AnalyzeItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "商品が見つかりません")
 		return
 	}
+
+	// 類似価格統計は、同じカテゴリの商品と比べて現在価格が高い/安い/妥当かを説明する材料です。
+	// excludeIDに自分の商品IDを渡し、自分自身を比較対象に含めないようにしています。
 	count, minPrice, maxPrice, avgPrice, _ := h.Items.SimilarPriceStats(r.Context(), item.Category, item.ID)
+
+	// priceInsight は画面にそのまま出る価格コメントです。
+	// 比較対象がない場合でも空欄にせず、購入者が何を確認すべきかを返します。
 	priceInsight := "同カテゴリの比較対象が少ないため、価格妥当性は商品状態と付属品で確認してください。"
 	if count > 0 {
 		if float64(item.PriceYen) > avgPrice*1.25 {
@@ -1418,6 +1418,9 @@ func (h *Handler) AnalyzeItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	analysis := heuristicItemAnalysis(item, priceInsight)
+
+	// AIへ渡すプロンプトには、商品情報だけでなく、ルールベースで作ったカテゴリ確認点も含めます。
+	// AIが使えた場合はより自然な箇条書きへ置き換え、失敗した場合はanalysisの初期値をそのまま返します。
 	prompt := ai.BuildItemAnalysisPrompt(item.Title, item.Description, item.Category, item.ConditionText, item.PriceYen, priceInsight, strings.Join(analysis.CategoryReviewHints, " / "))
 	if text, err := h.AI.GenerateText(prompt); err == nil {
 		if v := splitBullets(text, "不安点"); len(v) > 0 {
@@ -1435,7 +1438,9 @@ func (h *Handler) AnalyzeItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, analysis)
 }
 
-// 【詳細コメント】parseIDFromPath は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// parseIDFromPath は、/api/items/123 のようなURLから数値IDだけを取り出します。
+// prefixが指定された場合は、そのprefixで始まらないURLを不正として扱います。
+// IDが空、負数、途中に別のパス要素がある場合はfalseを返し、Handler側で400 Bad Requestにします。
 func parseIDFromPath(path string, prefix string) (int64, bool) {
 	raw := path
 	if prefix != "" {
@@ -1455,7 +1460,9 @@ func parseIDFromPath(path string, prefix string) (int64, bool) {
 	return id, true
 }
 
-// 【詳細コメント】ListMonthlyMoneySummary は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListMonthlyMoneySummary は、マイページの月別収支グラフ用データを返します。
+// Handlerでは「誰のデータか」をJWTから取り出し、実際の集計SQLはUserRepositoryへ任せます。
+// ここでは直近6か月だけを返し、画面側が重い集計を毎回持たないようにしています。
 func (h *Handler) ListMonthlyMoneySummary(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -1470,7 +1477,8 @@ func (h *Handler) ListMonthlyMoneySummary(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(w, http.StatusOK, data)
 }
 
-// 【詳細コメント】ListPaymentMethods は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListPaymentMethods は、ログインユーザーが登録した支払い方法一覧を返します。
+// レスポンスにはカード番号全体ではなく下4桁だけが入るため、画面表示に必要な最小情報だけを返す設計です。
 func (h *Handler) ListPaymentMethods(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -1485,14 +1493,15 @@ func (h *Handler) ListPaymentMethods(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, data)
 }
 
-// 【詳細コメント】CreatePaymentMethod は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// CreatePaymentMethod は、マイページから新しい支払い方法を登録します。
+// 入力値の妥当性やデフォルト支払い方法の切り替えはUserRepository側で行い、
+// HandlerはJSONデコードとHTTPステータスの変換に集中します。
 func (h *Handler) CreatePaymentMethod(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.CreatePaymentMethodRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -1506,13 +1515,17 @@ func (h *Handler) CreatePaymentMethod(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, method)
 }
 
-// 【詳細コメント】SetDefaultPaymentMethod は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// SetDefaultPaymentMethod は、登録済み支払い方法のうち1つをデフォルトにします。
+// URLは /api/me/payment-methods/{id}/default なので、末尾の/defaultを外してからIDを取り出します。
+// Repositoryでは同じユーザーの他カードを非デフォルトにして、デフォルトが1件だけになるようにします。
 func (h *Handler) SetDefaultPaymentMethod(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
+	// 末尾の/defaultは操作名でありIDではありません。
+	// 先に取り除いてから /api/me/payment-methods/ の後ろに残る数値部分をparseします。
 	trimmed := strings.TrimSuffix(r.URL.Path, "/default")
 	id, ok := parseIDFromPath(strings.TrimPrefix(trimmed, "/api/me/payment-methods/"), "")
 	if !ok {
@@ -1526,7 +1539,8 @@ func (h *Handler) SetDefaultPaymentMethod(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// 【詳細コメント】DeletePaymentMethod は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// DeletePaymentMethod は、マイページから支払い方法を削除します。
+// 削除対象がデフォルトだった場合の次候補選びはRepository側で処理し、画面は成功後に一覧を再取得します。
 func (h *Handler) DeletePaymentMethod(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -1545,8 +1559,12 @@ func (h *Handler) DeletePaymentMethod(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// 【詳細コメント】parseItemMessageIDs は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// parseItemMessageIDs は、/api/items/{itemID}/messages/{messageID} から商品IDとコメントIDを取り出します。
+// コメント削除では「どの商品に付いたどのコメントか」を両方確認する必要があるため、2つのIDを返します。
+// 形式が違うURLはfalseを返し、誤って別APIのパスを削除処理へ渡さないようにします。
 func parseItemMessageIDs(path string) (int64, int64, bool) {
+	// /api/items/ を外すと "{itemID}/messages/{messageID}" が残ります。
+	// Split後のpartsは [itemID, "messages", messageID] になる想定です。
 	trimmed := strings.TrimPrefix(path, "/api/items/")
 	parts := strings.Split(trimmed, "/")
 	if len(parts) != 3 || parts[1] != "messages" {
@@ -1560,7 +1578,9 @@ func parseItemMessageIDs(path string) (int64, int64, bool) {
 	return itemID, messageID, true
 }
 
-// 【詳細コメント】DeleteMessage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// DeleteMessage は、商品詳細ページの公開コメントを削除します。
+// 現在の仕様では、出品者だけが自分の商品についた公開コメントを削除できます。
+// 権限確認とDB削除はMessageRepository.DeletePublicBySellerに集約し、Handlerでは認証とURL解析だけを行います。
 func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -1581,7 +1601,6 @@ func (h *Handler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 
 // ListAIChatThreads は、ログインユーザーが過去に作成したAI対話スレッド一覧を返します。
 // AI対話ページ左側のスレッドリストで使い、話題ごとに会話を再開できるようにします。
-// 【詳細コメント】ListAIChatThreads は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (h *Handler) ListAIChatThreads(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -1598,14 +1617,12 @@ func (h *Handler) ListAIChatThreads(w http.ResponseWriter, r *http.Request) {
 
 // CreateAIChatThread は、空のAI対話スレッドを作成します。
 // ユーザーが明示的に「新しい話題」を押した場合に使います。
-// 【詳細コメント】CreateAIChatThread は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (h *Handler) CreateAIChatThread(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "ログインが必要です")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.CreateAIChatThreadRequest
 	_ = httpx.DecodeJSON(r, &req)
 	thread, err := h.Chats.CreateThread(r.Context(), userID, req.Title)
@@ -1618,7 +1635,6 @@ func (h *Handler) CreateAIChatThread(w http.ResponseWriter, r *http.Request) {
 
 // DeleteAIChatThread は、不要になったAI対話スレッドを履歴から削除します。
 // DBの外部キーにより、スレッド内メッセージもまとめて削除されます。
-// 【詳細コメント】DeleteAIChatThread は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (h *Handler) DeleteAIChatThread(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -1639,7 +1655,6 @@ func (h *Handler) DeleteAIChatThread(w http.ResponseWriter, r *http.Request) {
 
 // ListAIChatMessages は、指定されたAI対話スレッド内の発言履歴を返します。
 // 画面を開き直しても会話が残るように、localStorageではなくDBから読み込みます。
-// 【詳細コメント】ListAIChatMessages は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (h *Handler) ListAIChatMessages(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -1661,7 +1676,6 @@ func (h *Handler) ListAIChatMessages(w http.ResponseWriter, r *http.Request) {
 
 // CreateAIChatMessage は、ユーザー発言を保存し、その文脈をもとにAI返信も保存して返します。
 // 1リクエストで「ユーザー発言」と「AI回答」を両方DBに残すため、再読み込み後も同じ会話を再現できます。
-// 【詳細コメント】CreateAIChatMessage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (h *Handler) CreateAIChatMessage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
@@ -1673,7 +1687,6 @@ func (h *Handler) CreateAIChatMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "AI対話スレッドIDが正しくありません")
 		return
 	}
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.AIChatTurnRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -1720,7 +1733,6 @@ func (h *Handler) CreateAIChatMessage(w http.ResponseWriter, r *http.Request) {
 
 // parseAIChatThreadIDFromPath は /api/me/ai-chat-threads/{id}/messages の{id}を取り出します。
 // 通常の parseIDFromPath では末尾に /messages があるURLを扱いにくいため、専用関数にしています。
-// 【詳細コメント】parseAIChatThreadIDFromPath は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func parseAIChatThreadIDFromPath(path, suffix string) (int64, bool) {
 	if suffix != "" {
 		if !strings.HasSuffix(path, suffix) {
@@ -1733,7 +1745,6 @@ func parseAIChatThreadIDFromPath(path, suffix string) (int64, bool) {
 
 // buildGeneralChatPromptWithHistory は、AI対話の直近履歴をプロンプトに含めます。
 // 長い履歴を全部送るとトークン量が増えるため、デモ用途では直近8件だけを使います。
-// 【詳細コメント】buildGeneralChatPromptWithHistory は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func buildGeneralChatPromptWithHistory(history []models.AIChatMessage, latestMessage string) string {
 	start := 0
 	if len(history) > 8 {
@@ -1759,9 +1770,7 @@ func buildGeneralChatPromptWithHistory(history []models.AIChatMessage, latestMes
 
 // AIChat は、古いフロントエンド互換の単発AI対話APIです。
 // 新しいUIでは /api/me/ai-chat-threads/{id}/messages を使い、履歴をDBへ保存します。
-// 【詳細コメント】AIChat は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (h *Handler) AIChat(w http.ResponseWriter, r *http.Request) {
-	// 【詳細コメント】req は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var req models.AIChatRequest
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "JSONの形式が正しくありません")
@@ -1774,7 +1783,6 @@ func (h *Handler) AIChat(w http.ResponseWriter, r *http.Request) {
 	}
 	text, notice, usedFallback, err := h.AI.GenerateTextWithFallback(
 		ai.BuildGeneralChatPrompt(message),
-		// 【詳細コメント】この宣言 は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		func() string { return ai.FallbackGeneralChat(message) },
 	)
 	if err != nil {

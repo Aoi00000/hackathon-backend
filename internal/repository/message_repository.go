@@ -2,12 +2,10 @@
 // ファイル概要: hackathon-backend/internal/repository/message_repository.go
 // 役割: 公開コメント、非公開DM、ブロック、運営問い合わせなどコミュニケーション系DB処理を担当します。
 //
-// 読み方の目安:
-// 1. まずpackage/importを確認し、このファイルがどの層に属するかを把握します。
-// 2. type定義では、DB/API/画面で受け渡すデータの形を確認します。
-// 3. func定義では、入力検証、DB処理、AI呼び出し、レスポンス整形の順に読むと流れを追いやすくなります。
-//
 // ============================================================
+// 実装詳細メモ:
+// 公開コメント、非公開DM、ブロック判定、通知作成をDBトランザクション込みで扱います。
+// コメント作成時は商品出品者・返信先・ブロック状態を確認し、C2C取引の安全性を保ちます。
 package repository
 
 import (
@@ -19,10 +17,10 @@ import (
 )
 
 // MessageRepository は公開コメントと非公開DMへのDB操作を担当します。
-// 【詳細コメント】MessageRepository は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 type MessageRepository struct{ DB *sql.DB }
 
-// 【詳細コメント】ListByItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListByItem は、商品詳細ページの公開コメント欄に表示するコメント一覧を取得します。
+// 親コメントと返信を同じテーブルで管理しているため、親の更新日時を使ってスレッド単位で新しい順に並べます。
 func (r *MessageRepository) ListByItem(ctx context.Context, itemID int64) ([]models.Message, error) {
 	rows, err := r.DB.QueryContext(ctx,
 		`SELECT m.id, m.item_id, m.parent_message_id, m.sender_id, su.name, m.receiver_id, ru.name,
@@ -51,13 +49,11 @@ func (r *MessageRepository) ListByItem(ctx context.Context, itemID int64) ([]mod
 	return messages, rows.Err()
 }
 
-// 【詳細コメント】scanMessage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// scanMessage は、公開コメントSQLのSELECT結果を models.Message へ変換する共通処理です。
+// parent_message_id は親コメントならNULL、返信なら親IDが入るため、sql.NullInt64からnilポインタへ変換します。
 func scanMessage(scanner interface{ Scan(dest ...any) error }) (models.Message, error) {
-	// 【詳細コメント】msg は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var msg models.Message
-	// 【詳細コメント】parentID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var parentID sql.NullInt64
-	// 【詳細コメント】isSeller は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var isSeller int
 	err := scanner.Scan(&msg.ID, &msg.ItemID, &parentID, &msg.SenderID, &msg.SenderName, &msg.ReceiverID, &msg.ReceiverName, &msg.Body, &isSeller, &msg.CreatedAt, &msg.UpdatedAt)
 	if parentID.Valid {
@@ -68,19 +64,18 @@ func scanMessage(scanner interface{ Scan(dest ...any) error }) (models.Message, 
 	return msg, err
 }
 
-// 【詳細コメント】Create は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// Create は、商品への公開コメントまたは公開返信を作成します。
+// 送信者と出品者のブロック関係、返信先が同じ商品に属するか、通知先が誰かをトランザクション内で確認します。
 func (r *MessageRepository) Create(ctx context.Context, itemID, senderID int64, parentMessageID *int64, body string) (models.Message, error) {
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return models.Message{}, err
 	}
 	defer tx.Rollback()
-	// 【詳細コメント】receiverID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var receiverID, sellerID int64
 	if err := tx.QueryRowContext(ctx, `SELECT seller_id FROM items WHERE id=?`, itemID).Scan(&sellerID); err != nil {
 		return models.Message{}, err
 	}
-	// 【詳細コメント】blocked は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var blocked int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blocked_users WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`, senderID, sellerID, sellerID, senderID).Scan(&blocked); err != nil {
 		return models.Message{}, err
@@ -89,7 +84,6 @@ func (r *MessageRepository) Create(ctx context.Context, itemID, senderID int64, 
 		return models.Message{}, fmt.Errorf("ブロック関係にあるためコメントできません")
 	}
 	if parentMessageID != nil {
-		// 【詳細コメント】parentItemID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var parentItemID int64
 		if err := tx.QueryRowContext(ctx, `SELECT item_id, sender_id FROM messages WHERE id=?`, *parentMessageID).Scan(&parentItemID, &receiverID); err != nil {
 			return models.Message{}, err
@@ -118,7 +112,8 @@ func (r *MessageRepository) Create(ctx context.Context, itemID, senderID int64, 
 	return r.FindByID(ctx, id)
 }
 
-// 【詳細コメント】FindByID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// FindByID は、作成直後の公開コメントを画面へ返すために、表示名や出品者判定をJOIN付きで再取得します。
+// INSERT直後のIDだけではReact側が必要とするsenderNameやreceiverNameが足りないため、この関数で完成形にします。
 func (r *MessageRepository) FindByID(ctx context.Context, id int64) (models.Message, error) {
 	return scanMessage(r.DB.QueryRowContext(ctx,
 		`SELECT m.id, m.item_id, m.parent_message_id, m.sender_id, su.name, m.receiver_id, ru.name,
@@ -126,7 +121,8 @@ func (r *MessageRepository) FindByID(ctx context.Context, id int64) (models.Mess
          FROM messages m JOIN items i ON i.id=m.item_id JOIN users su ON su.id=m.sender_id JOIN users ru ON ru.id=m.receiver_id WHERE m.id=?`, id))
 }
 
-// 【詳細コメント】ListPrivateByItem は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListPrivateByItem は、ログインユーザーが参加している非公開DMだけを取得します。
+// sender_id または receiver_id が本人の行に限定することで、他ユーザー同士の商談内容が見えないようにします。
 func (r *MessageRepository) ListPrivateByItem(ctx context.Context, itemID, userID int64) ([]models.PrivateMessage, error) {
 	rows, err := r.DB.QueryContext(ctx,
 		`SELECT p.id, p.item_id, p.parent_private_message_id, p.sender_id, su.name, p.receiver_id, ru.name, p.body, p.created_at
@@ -142,12 +138,9 @@ func (r *MessageRepository) ListPrivateByItem(ctx context.Context, itemID, userI
 		return nil, err
 	}
 	defer rows.Close()
-	// 【詳細コメント】out は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var out []models.PrivateMessage
 	for rows.Next() {
-		// 【詳細コメント】m は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var m models.PrivateMessage
-		// 【詳細コメント】parentID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var parentID sql.NullInt64
 		if err := rows.Scan(&m.ID, &m.ItemID, &parentID, &m.SenderID, &m.SenderName, &m.ReceiverID, &m.ReceiverName, &m.Body, &m.CreatedAt); err != nil {
 			return nil, err
@@ -161,20 +154,19 @@ func (r *MessageRepository) ListPrivateByItem(ctx context.Context, itemID, userI
 	return out, rows.Err()
 }
 
-// 【詳細コメント】CreatePrivate は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// CreatePrivate は、商品についての非公開DMまたはDM返信を作成します。
+// DMは購入検討者と出品者の間だけに制限し、返信時は元スレッドの参加者以外が混ざらないよう検証します。
 func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID, receiverID int64, parentMessageID *int64, body string) (models.PrivateMessage, error) {
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return models.PrivateMessage{}, err
 	}
 	defer tx.Rollback()
-	// 【詳細コメント】sellerID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var sellerID int64
 	if err := tx.QueryRowContext(ctx, `SELECT seller_id FROM items WHERE id=?`, itemID).Scan(&sellerID); err != nil {
 		return models.PrivateMessage{}, err
 	}
 	if parentMessageID != nil {
-		// 【詳細コメント】parentItemID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var parentItemID, parentSenderID, parentReceiverID int64
 		if err := tx.QueryRowContext(ctx, `SELECT item_id, sender_id, receiver_id FROM private_messages WHERE id=?`, *parentMessageID).Scan(&parentItemID, &parentSenderID, &parentReceiverID); err != nil {
 			return models.PrivateMessage{}, err
@@ -199,7 +191,6 @@ func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID,
 	if senderID != sellerID && receiverID != sellerID {
 		return models.PrivateMessage{}, fmt.Errorf("DMは購入検討者と出品者の間でのみ送れます")
 	}
-	// 【詳細コメント】blocked は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var blocked int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blocked_users WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)`, senderID, receiverID, receiverID, senderID).Scan(&blocked); err != nil {
 		return models.PrivateMessage{}, err
@@ -222,11 +213,10 @@ func (r *MessageRepository) CreatePrivate(ctx context.Context, itemID, senderID,
 	return r.FindPrivateByID(ctx, id)
 }
 
-// 【詳細コメント】FindPrivateByID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// FindPrivateByID は、作成直後のDMを送信者名・受信者名付きで返すための再取得処理です。
+// 公開コメントと同様、DBに保存されたIDだけでなく画面表示に必要な名前をJOINで補います。
 func (r *MessageRepository) FindPrivateByID(ctx context.Context, id int64) (models.PrivateMessage, error) {
-	// 【詳細コメント】m は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var m models.PrivateMessage
-	// 【詳細コメント】parentID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var parentID sql.NullInt64
 	err := r.DB.QueryRowContext(ctx, `SELECT p.id,p.item_id,p.parent_private_message_id,p.sender_id,su.name,p.receiver_id,ru.name,p.body,p.created_at FROM private_messages p JOIN users su ON su.id=p.sender_id JOIN users ru ON ru.id=p.receiver_id WHERE p.id=?`, id).Scan(&m.ID, &m.ItemID, &parentID, &m.SenderID, &m.SenderName, &m.ReceiverID, &m.ReceiverName, &m.Body, &m.CreatedAt)
 	if parentID.Valid {
@@ -236,7 +226,8 @@ func (r *MessageRepository) FindPrivateByID(ctx context.Context, id int64) (mode
 	return m, err
 }
 
-// 【詳細コメント】DeletePublicBySeller は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// DeletePublicBySeller は、出品者が自分の商品についた公開コメントを削除するための処理です。
+// コメント投稿者本人ではなく出品者権限で管理するため、商品IDとsellerIDをJOINで照合してからDELETEします。
 func (r *MessageRepository) DeletePublicBySeller(ctx context.Context, itemID, messageID, sellerID int64) error {
 	// 出品者だけが自分の商品についた公開コメントを削除できます。
 	// 親コメントを削除した場合、DBのON DELETE CASCADEにより返信もまとめて削除されます。

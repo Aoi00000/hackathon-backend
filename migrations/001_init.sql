@@ -2,14 +2,14 @@
 -- ファイル概要: hackathon-backend/migrations/001_init.sql
 -- 役割: MySQLの初期スキーマとデモデータを定義し、ローカルでもクラウドでも同じ初期状態を再現します。
 --
--- 読み方の目安:
--- 1. 文字コード設定で日本語データを安全に扱えることを確認します。
--- 2. CREATE TABLE 群でER図のエンティティと外部キー関係を把握します。
--- 3. INSERT 群でデモ用ユーザー・商品・取引状態を確認します。
--- 4. AUTO_INCREMENT調整により、初期データと新規作成データのID衝突を防ぎます。
---
--- スキーマやデモデータの意味が追いやすいよう、テーブル単位・制約単位・投入データ単位で説明を補足しています。
+-- 実装上の注目点:
+-- 日本語の商品名・説明・住所を扱うため、最初にutf8mb4を明示します。
+-- CREATE TABLE群では、商品、購入、コメント、DM、通知、保存検索、支払い方法、AIチャット履歴の関係を定義します。
+-- INSERT群では、検索・購入・出品履歴・推薦・売れ残り通知をすぐ確認できるデモデータを投入します。
 -- ============================================================
+-- 実装詳細メモ:
+-- フリマアプリのER構造とデモデータを1ファイルで再現する初期マイグレーションです。
+-- 外部キー、UNIQUE制約、検索INDEX、デモ用の初期商品がどの画面機能を支えるかを確認できます。
 /*!40101 SET NAMES utf8mb4 */;
 SET character_set_client = utf8mb4;
 SET character_set_connection = utf8mb4;
@@ -20,7 +20,9 @@ SET character_set_results = utf8mb4;
 -- MySQL 8.0 / utf8mb4 を想定
 -- ============================================================
 
--- 【テーブル定義】users はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- users はログイン主体であり、出品者・購入者・通知受信者・問い合わせ投稿者の基点です。
+-- balance_coins は購入に使える残高、sales_coins は売上金として分け、購入時と受取完了時の資金移動を説明しやすくしています。
+-- rating_sum/rating_count は評価平均を都度再計算できるようにする集計列で、レビュー本文の履歴は purchases.rating_comment に残します。
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(80) NOT NULL,
@@ -36,7 +38,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】items はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- items はフリマアプリの中心エンティティです。
+-- product_code は画面に出す商品番号、id は内部JOIN用の主キーとして分けています。
+-- image_url は旧実装名のままですが、現在は画像・動画Data URLのJSON配列も入るためMEDIUMTEXTにしています。
+-- FULLTEXT INDEX はMySQL側のキーワード検索、通常INDEXはステータス・出品者・カテゴリ別の一覧表示を高速化します。
 CREATE TABLE IF NOT EXISTS items (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   product_code VARCHAR(32) UNIQUE,
@@ -63,7 +68,9 @@ CREATE TABLE IF NOT EXISTS items (
   FULLTEXT INDEX ft_items_title_description (title, description)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】purchases はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- purchases は「1商品につき1回だけ購入できる」取引状態を持ちます。
+-- item_id にUNIQUEを付けることで二重購入をDB制約でも防ぎ、Repositoryのトランザクションと合わせて在庫整合性を守ります。
+-- status は支払い済み、発送済み、受取完了、キャンセルの流れを表し、購入履歴画面の列分けに使います。
 CREATE TABLE IF NOT EXISTS purchases (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   item_id BIGINT NOT NULL UNIQUE,
@@ -86,7 +93,9 @@ CREATE TABLE IF NOT EXISTS purchases (
   INDEX idx_purchases_status_deadline (status, shipping_deadline)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】messages はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- messages は商品詳細ページに出る公開コメントです。
+-- parent_message_id で返信を表し、親コメントを削除した場合は返信もON DELETE CASCADEで消します。
+-- sender_id/receiver_id を両方持つことで、出品者宛コメントと返信通知の宛先を明確にします。
 CREATE TABLE IF NOT EXISTS messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   item_id BIGINT NOT NULL,
@@ -105,7 +114,9 @@ CREATE TABLE IF NOT EXISTS messages (
   INDEX idx_messages_receiver_id (receiver_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】private_messages はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- private_messages は出品者と購入検討者だけが見るDMです。
+-- 公開コメントとは分けて保存し、商品詳細ページでログインユーザーの関係者だけが取得できるようRepositoryで絞り込みます。
+-- idx_private_messages_item_users は、商品IDと送受信者で会話を絞る一覧取得を支えます。
 CREATE TABLE IF NOT EXISTS private_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   item_id BIGINT NOT NULL,
@@ -123,7 +134,8 @@ CREATE TABLE IF NOT EXISTS private_messages (
   INDEX idx_private_messages_receiver_created_at (receiver_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】checklist はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- checklist は「気になる商品」保存機能です。
+-- UNIQUE(user_id, item_id) により同じ商品を二重登録できないようにし、last_seen_updated_at は後で価格変更通知などに拡張できます。
 CREATE TABLE IF NOT EXISTS checklist (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -136,7 +148,8 @@ CREATE TABLE IF NOT EXISTS checklist (
   INDEX idx_checklist_user_created_at (user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】notifications はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- notifications は購入、コメント、保存検索、AI販売改善提案などのユーザー通知をまとめます。
+-- item_id はNULL許容にし、商品に紐づかない運営通知やマイページ系通知も同じ一覧に出せるようにしています。
 CREATE TABLE IF NOT EXISTS notifications (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -150,7 +163,8 @@ CREATE TABLE IF NOT EXISTS notifications (
   INDEX idx_notifications_user_created_at (user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】saved_searches はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- saved_searches は商品一覧の検索条件をJSON文字列で保存します。
+-- カラムを条件ごとに分けずquery_jsonにすることで、自然言語検索や新しいフィルタ追加にもマイグレーションなしで追従できます。
 CREATE TABLE IF NOT EXISTS saved_searches (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -161,7 +175,8 @@ CREATE TABLE IF NOT EXISTS saved_searches (
   INDEX idx_saved_searches_user_created_at (user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】blocked_users はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- blocked_users はユーザー同士のブロック関係です。
+-- blocker_id/blocked_id のペアをUNIQUEにし、コメント・DM・商品一覧の除外判定で同じ関係を重複登録しないようにします。
 CREATE TABLE IF NOT EXISTS blocked_users (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   blocker_id BIGINT NOT NULL,
@@ -172,7 +187,8 @@ CREATE TABLE IF NOT EXISTS blocked_users (
   UNIQUE KEY uq_blocked_users_pair (blocker_id, blocked_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 【テーブル定義】support_messages はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- support_messages はユーザーから運営への問い合わせ履歴です。
+-- ハッカソンMVPでは管理者返信までは持たず、マイページで送信履歴を確認できる最小構成にしています。
 CREATE TABLE IF NOT EXISTS support_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -183,8 +199,8 @@ CREATE TABLE IF NOT EXISTS support_messages (
   INDEX idx_support_messages_user_created_at (user_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-
--- 【テーブル定義】payment_methods はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
+-- payment_methods は購入フローで使う支払い方法の表示情報です。
+-- 実カード番号は保存せず、card_last4だけを保持します。is_defaultは購入画面で最初に使う支払い手段を示します。
 CREATE TABLE IF NOT EXISTS payment_methods (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -202,7 +218,6 @@ CREATE TABLE IF NOT EXISTS payment_methods (
 
 -- AI対話ページのスレッド情報です。
 -- 商品ごとのコメントとは別に、ユーザーが自由相談を話題ごとに保存できるようにします。
--- 【テーブル定義】ai_chat_threads はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS ai_chat_threads (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,
@@ -215,7 +230,6 @@ CREATE TABLE IF NOT EXISTS ai_chat_threads (
 
 -- AI対話ページの発言履歴です。
 -- role=user はユーザー発言、role=assistant はAI回答を表し、notice/used_fallbackで外部AIフォールバック状態も残します。
--- 【テーブル定義】ai_chat_messages はER図上の主要エンティティです。主キー、外部キー、検索用INDEXを順に確認します。
 CREATE TABLE IF NOT EXISTS ai_chat_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   thread_id BIGINT NOT NULL,

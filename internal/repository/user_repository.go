@@ -2,12 +2,10 @@
 // ファイル概要: hackathon-backend/internal/repository/user_repository.go
 // 役割: ユーザー登録、認証、プロフィール、残高、通知、支払い方法、保存検索を担当します。
 //
-// 読み方の目安:
-// 1. まずpackage/importを確認し、このファイルがどの層に属するかを把握します。
-// 2. type定義では、DB/API/画面で受け渡すデータの形を確認します。
-// 3. func定義では、入力検証、DB処理、AI呼び出し、レスポンス整形の順に読むと流れを追いやすくなります。
-//
 // ============================================================
+// 実装詳細メモ:
+// ユーザー、残高、保存検索、通知、ブロック、問い合わせ、支払い方法、月次収支を扱うRepositoryです。
+// マイページの複数カードがこのファイルの関数へ対応しており、ユーザー中心の状態を一箇所で管理します。
 // Package repository の user_repository は、ユーザー、通知、保存検索条件、ブロック、運営DMを扱います。
 //
 // マイページに表示する月次/累計の売上・利用額も、この層でDBから集計し、
@@ -27,14 +25,12 @@ import (
 )
 
 // UserRepository は users とユーザー周辺テーブルへのDB操作を担当します。
-// 【詳細コメント】UserRepository は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 type UserRepository struct {
 	DB *sql.DB
 }
 
 // formatJPY は通知本文などのユーザー向け金額を "¥1,200" 形式に整える小さな補助関数です。
 // DB/API の内部名には coins が残っていますが、画面・通知では日本円風の表記に統一します。
-// 【詳細コメント】formatJPY は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func formatJPY(amount int) string {
 	text := strconv.Itoa(amount)
 	for i := len(text) - 3; i > 0; i -= 3 {
@@ -43,7 +39,8 @@ func formatJPY(amount int) string {
 	return text
 }
 
-// 【詳細コメント】Create は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// Create は、新規ユーザーをusersテーブルへ作成し、作成後のUserを返します。
+// パスワードはHandler層でハッシュ化済みのpasswordHashだけを受け取り、平文パスワードをRepositoryへ持ち込みません。
 func (r *UserRepository) Create(ctx context.Context, name, email, passwordHash string) (models.User, error) {
 	result, err := r.DB.ExecContext(
 		ctx,
@@ -62,15 +59,12 @@ func (r *UserRepository) Create(ctx context.Context, name, email, passwordHash s
 	return r.FindByID(ctx, id)
 }
 
-// 【詳細コメント】scanUser は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// scanUser は、userSelectのSELECT結果をmodels.Userへ変換する共通処理です。
+// shipping_regionなどNULLになり得る列はsql.NullStringで受け、APIレスポンスでは空文字として扱えるようにします。
 func scanUser(scanner interface{ Scan(dest ...any) error }) (models.User, error) {
-	// 【詳細コメント】user は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var user models.User
-	// 【詳細コメント】ratingAverage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var ratingAverage sql.NullFloat64
-	// 【詳細コメント】shippingRegion は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var shippingRegion sql.NullString
-	// 【詳細コメント】shippingAddress は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var shippingAddress sql.NullString
 	err := scanner.Scan(
 		&user.ID,
@@ -102,7 +96,8 @@ func scanUser(scanner interface{ Scan(dest ...any) error }) (models.User, error)
 	return user, err
 }
 
-// 【詳細コメント】userSelect は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// userSelect は、ユーザー基本情報に月次/累計の購入額・売上額を付けたSELECT文を組み立てます。
+// マイページのカード表示で追加集計APIを増やさないよう、ユーザー取得時にサブクエリで集計しています。
 func userSelect(where string) string {
 	// 購入・売上の集計は purchases テーブルから毎回算出します。
 	// 利用額は「購入手続き完了時点」で購入者の残高から差し引かれるため、canceled以外を数えます。
@@ -119,7 +114,8 @@ func userSelect(where string) string {
 	return base + where
 }
 
-// 【詳細コメント】FindByEmail は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// FindByEmail は、ログイン時にメールアドレスからユーザーを探す処理です。
+// 見つかったUserにはPasswordHashも含まれ、Handler層で入力パスワードとの照合に使います。
 func (r *UserRepository) FindByEmail(ctx context.Context, email string) (models.User, error) {
 	user, err := scanUser(r.DB.QueryRowContext(
 		ctx,
@@ -135,7 +131,8 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (models.
 	return user, nil
 }
 
-// 【詳細コメント】FindByID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// FindByID は、JWTから得たユーザーIDや作成直後のIDを使ってUserを取得します。
+// 認証後の /api/me や各種更新後の再取得で、画面に返す最新プロフィールを作ります。
 func (r *UserRepository) FindByID(ctx context.Context, id int64) (models.User, error) {
 	user, err := scanUser(r.DB.QueryRowContext(
 		ctx,
@@ -149,7 +146,6 @@ func (r *UserRepository) FindByID(ctx context.Context, id int64) (models.User, e
 }
 
 // Charge はアプリ内仮想通貨をチャージします。
-// 【詳細コメント】Charge は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func (r *UserRepository) Charge(ctx context.Context, userID int64, amount int) (models.User, error) {
 	if amount <= 0 {
 		return models.User{}, fmt.Errorf("チャージ金額は1以上にしてください")
@@ -172,7 +168,8 @@ func (r *UserRepository) Charge(ctx context.Context, userID int64, amount int) (
 	return r.FindByID(ctx, userID)
 }
 
-// 【詳細コメント】UpdateProfile は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// UpdateProfile は、発送元地域とお届け先住所を保存します。
+// 出品フォームと購入手続き画面がこの値を初期値に使うため、ユーザー入力の手間を減らします。
 func (r *UserRepository) UpdateProfile(ctx context.Context, userID int64, req models.UpdateProfileRequest) (models.User, error) {
 	_, err := r.DB.ExecContext(
 		ctx,
@@ -188,7 +185,8 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, userID int64, req mo
 	return r.FindByID(ctx, userID)
 }
 
-// 【詳細コメント】BlockUser は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// BlockUser は、ログインユーザーが相手ユーザーとの表示・コメント・購入を避けるための関係を作ります。
+// INSERT IGNOREにより、同じ相手を何度押しても重複エラーにせず、ブロック済み状態へ収束します。
 func (r *UserRepository) BlockUser(ctx context.Context, blockerID, blockedID int64) error {
 	if blockerID == blockedID {
 		return fmt.Errorf("自分自身はブロックできません")
@@ -197,13 +195,15 @@ func (r *UserRepository) BlockUser(ctx context.Context, blockerID, blockedID int
 	return err
 }
 
-// 【詳細コメント】UnblockUser は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// UnblockUser は、ブロック関係を解除します。
+// マイページのブロック一覧から呼ばれ、解除後は商品一覧やコメント制限の対象外になります。
 func (r *UserRepository) UnblockUser(ctx context.Context, blockerID, blockedID int64) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM blocked_users WHERE blocker_id = ? AND blocked_id = ?`, blockerID, blockedID)
 	return err
 }
 
-// 【詳細コメント】ListBlockedUsers は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListBlockedUsers は、マイページに表示するブロック済みユーザー一覧を取得します。
+// blocked_idだけでなく相手の名前もJOINし、フロントエンドが追加APIなしで表示できるようにします。
 func (r *UserRepository) ListBlockedUsers(ctx context.Context, blockerID int64) ([]models.BlockedUser, error) {
 	rows, err := r.DB.QueryContext(
 		ctx,
@@ -216,10 +216,8 @@ func (r *UserRepository) ListBlockedUsers(ctx context.Context, blockerID int64) 
 		return nil, err
 	}
 	defer rows.Close()
-	// 【詳細コメント】out は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var out []models.BlockedUser
 	for rows.Next() {
-		// 【詳細コメント】b は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var b models.BlockedUser
 		if err := rows.Scan(&b.ID, &b.BlockerID, &b.BlockedID, &b.BlockedName, &b.CreatedAt); err != nil {
 			return nil, err
@@ -229,9 +227,9 @@ func (r *UserRepository) ListBlockedUsers(ctx context.Context, blockerID int64) 
 	return out, rows.Err()
 }
 
-// 【詳細コメント】AreBlocked は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// AreBlocked は、2ユーザー間にどちら向きでもブロック関係があるかを調べます。
+// コメント、DM、購入など、相互作用を伴う処理の前に使う安全確認です。
 func (r *UserRepository) AreBlocked(ctx context.Context, userA, userB int64) (bool, error) {
-	// 【詳細コメント】exists は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var exists int
 	err := r.DB.QueryRowContext(
 		ctx,
@@ -244,13 +242,15 @@ func (r *UserRepository) AreBlocked(ctx context.Context, userA, userB int64) (bo
 	return err == nil, err
 }
 
-// 【詳細コメント】CreateNotification は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// CreateNotification は、任意の機能から通知を1件作成する共通関数です。
+// itemIDはnilを許可し、商品に紐づかないチャージや支払い方法登録の通知にも使えるようにしています。
 func (r *UserRepository) CreateNotification(ctx context.Context, userID int64, itemID *int64, title, body string) error {
 	_, err := r.DB.ExecContext(ctx, `INSERT INTO notifications (user_id, item_id, title, body) VALUES (?, ?, ?, ?)`, userID, itemID, title, body)
 	return err
 }
 
-// 【詳細コメント】ListNotifications は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListNotifications は、通知一覧画面とヘッダー未読数で使う本人宛て通知を新しい順に取得します。
+// read_atやitem_idはNULLになり得るため、ポインタへ変換して「未読」「商品なし通知」を表現します。
 func (r *UserRepository) ListNotifications(ctx context.Context, userID int64) ([]models.Notification, error) {
 	rows, err := r.DB.QueryContext(
 		ctx,
@@ -261,14 +261,10 @@ func (r *UserRepository) ListNotifications(ctx context.Context, userID int64) ([
 		return nil, err
 	}
 	defer rows.Close()
-	// 【詳細コメント】out は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var out []models.Notification
 	for rows.Next() {
-		// 【詳細コメント】n は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var n models.Notification
-		// 【詳細コメント】itemID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var itemID sql.NullInt64
-		// 【詳細コメント】readAt は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var readAt sql.NullTime
 		if err := rows.Scan(&n.ID, &n.UserID, &itemID, &n.Title, &n.Body, &readAt, &n.CreatedAt); err != nil {
 			return nil, err
@@ -286,7 +282,8 @@ func (r *UserRepository) ListNotifications(ctx context.Context, userID int64) ([
 	return out, rows.Err()
 }
 
-// 【詳細コメント】SaveSearch は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// SaveSearch は、商品一覧で現在の検索条件を名前付きで保存します。
+// query_jsonにはItemSearchParams相当のJSONをそのまま入れ、新しい検索条件が増えてもDB列追加を避けます。
 func (r *UserRepository) SaveSearch(ctx context.Context, userID int64, req models.SaveSearchRequest) (models.SavedSearch, error) {
 	if req.Name == "" || req.QueryJSON == "" {
 		return models.SavedSearch{}, fmt.Errorf("検索条件名と検索条件が必要です")
@@ -302,25 +299,23 @@ func (r *UserRepository) SaveSearch(ctx context.Context, userID int64, req model
 	return r.FindSavedSearch(ctx, userID, id)
 }
 
-// 【詳細コメント】FindSavedSearch は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// FindSavedSearch は、保存直後や個別確認で保存検索を1件取得します。
+// userIDも条件に入れることで、他ユーザーの保存検索IDを指定されても読めないようにします。
 func (r *UserRepository) FindSavedSearch(ctx context.Context, userID, id int64) (models.SavedSearch, error) {
-	// 【詳細コメント】s は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var s models.SavedSearch
 	err := r.DB.QueryRowContext(ctx, `SELECT id, user_id, name, query_json, created_at FROM saved_searches WHERE id = ? AND user_id = ?`, id, userID).Scan(&s.ID, &s.UserID, &s.Name, &s.QueryJSON, &s.CreatedAt)
 	return s, err
 }
 
-// 【詳細コメント】MarkNotificationRead は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// MarkNotificationRead は、通知を既読化し、その最新状態を返します。
+// COALESCEで既読日時がすでにある場合は上書きせず、最初に読んだ時刻を保持します。
 func (r *UserRepository) MarkNotificationRead(ctx context.Context, userID, notificationID int64) (models.Notification, error) {
 	_, err := r.DB.ExecContext(ctx, `UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND user_id = ?`, notificationID, userID)
 	if err != nil {
 		return models.Notification{}, err
 	}
-	// 【詳細コメント】n は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var n models.Notification
-	// 【詳細コメント】itemID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var itemID sql.NullInt64
-	// 【詳細コメント】readAt は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var readAt sql.NullTime
 	err = r.DB.QueryRowContext(ctx, `SELECT id, user_id, item_id, title, body, read_at, created_at FROM notifications WHERE id = ? AND user_id = ?`, notificationID, userID).Scan(&n.ID, &n.UserID, &itemID, &n.Title, &n.Body, &readAt, &n.CreatedAt)
 	if err != nil {
@@ -337,17 +332,16 @@ func (r *UserRepository) MarkNotificationRead(ctx context.Context, userID, notif
 	return n, nil
 }
 
-// 【詳細コメント】ListSavedSearches は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListSavedSearches は、マイページに表示する保存検索一覧を取得します。
+// フロントエンド側ではquery_jsonを読み解き、カテゴリや価格などの条件チップとして表示します。
 func (r *UserRepository) ListSavedSearches(ctx context.Context, userID int64) ([]models.SavedSearch, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT id, user_id, name, query_json, created_at FROM saved_searches WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	// 【詳細コメント】out は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var out []models.SavedSearch
 	for rows.Next() {
-		// 【詳細コメント】s は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var s models.SavedSearch
 		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.QueryJSON, &s.CreatedAt); err != nil {
 			return nil, err
@@ -357,13 +351,15 @@ func (r *UserRepository) ListSavedSearches(ctx context.Context, userID int64) ([
 	return out, rows.Err()
 }
 
-// 【詳細コメント】DeleteSavedSearch は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// DeleteSavedSearch は、本人が保存した検索条件を削除します。
+// userIDもWHEREに含め、URL上のIDだけで他ユーザーの検索条件を消せないようにします。
 func (r *UserRepository) DeleteSavedSearch(ctx context.Context, userID, id int64) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM saved_searches WHERE id = ? AND user_id = ?`, id, userID)
 	return err
 }
 
-// 【詳細コメント】SendSupportMessage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// SendSupportMessage は、マイページから運営へ送る問い合わせを保存します。
+// subjectが空なら一般相談として扱い、画面ではsubject単位でスレッド風にまとめます。
 func (r *UserRepository) SendSupportMessage(ctx context.Context, userID int64, subject, body string) (models.SupportMessage, error) {
 	if subject == "" {
 		subject = "一般相談"
@@ -379,25 +375,24 @@ func (r *UserRepository) SendSupportMessage(ctx context.Context, userID int64, s
 	return r.FindSupportMessage(ctx, userID, id)
 }
 
-// 【詳細コメント】FindSupportMessage は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// FindSupportMessage は、作成直後の問い合わせをユーザー名付きで取得します。
+// INSERT結果のIDだけでは画面表示に必要なuserNameがないため、JOINして完成形を返します。
 func (r *UserRepository) FindSupportMessage(ctx context.Context, userID, id int64) (models.SupportMessage, error) {
-	// 【詳細コメント】msg は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var msg models.SupportMessage
 	err := r.DB.QueryRowContext(ctx, `SELECT s.id, s.user_id, u.name, COALESCE(s.subject, '一般相談'), s.body, s.created_at FROM support_messages s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.user_id = ?`, id, userID).Scan(&msg.ID, &msg.UserID, &msg.UserName, &msg.Subject, &msg.Body, &msg.CreatedAt)
 	return msg, err
 }
 
-// 【詳細コメント】ListSupportMessages は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListSupportMessages は、本人が送った運営問い合わせ履歴を新しい順に取得します。
+// 運営返信機能は未実装ですが、ユーザーが送信済み内容を確認できるよう履歴を残します。
 func (r *UserRepository) ListSupportMessages(ctx context.Context, userID int64) ([]models.SupportMessage, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT s.id, s.user_id, u.name, COALESCE(s.subject, '一般相談'), s.body, s.created_at FROM support_messages s JOIN users u ON u.id = s.user_id WHERE s.user_id = ? ORDER BY s.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	// 【詳細コメント】out は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var out []models.SupportMessage
 	for rows.Next() {
-		// 【詳細コメント】msg は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var msg models.SupportMessage
 		if err := rows.Scan(&msg.ID, &msg.UserID, &msg.UserName, &msg.Subject, &msg.Body, &msg.CreatedAt); err != nil {
 			return nil, err
@@ -407,7 +402,8 @@ func (r *UserRepository) ListSupportMessages(ctx context.Context, userID int64) 
 	return out, rows.Err()
 }
 
-// 【詳細コメント】maskCardNumber は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// maskCardNumber は、カード番号から表示用の下4桁だけを取り出します。
+// 空白やハイフンを除去し、画面や通知にカード番号全体を出さないための最低限の安全化です。
 func maskCardNumber(cardNumber string) string {
 	cleaned := strings.NewReplacer(" ", "", "-", "").Replace(cardNumber)
 	if len(cleaned) < 4 {
@@ -416,7 +412,8 @@ func maskCardNumber(cardNumber string) string {
 	return cleaned[len(cleaned)-4:]
 }
 
-// 【詳細コメント】ListMonthlyMoneySummary は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListMonthlyMoneySummary は、直近monthsか月分の売上額と利用額を月単位で集計します。
+// 取引のない月も0円として返し、フロントエンドの棒グラフが月抜けせず比較できるようにします。
 func (r *UserRepository) ListMonthlyMoneySummary(ctx context.Context, userID int64, months int) ([]models.MonthlyMoneySummary, error) {
 	if months <= 0 || months > 24 {
 		months = 6
@@ -463,9 +460,7 @@ func (r *UserRepository) ListMonthlyMoneySummary(ctx context.Context, userID int
 	defer rows.Close()
 
 	for rows.Next() {
-		// 【詳細コメント】month は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var month string
-		// 【詳細コメント】sales は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var sales, spend sql.NullInt64
 		if err := rows.Scan(&month, &sales, &spend); err != nil {
 			return nil, err
@@ -482,7 +477,8 @@ func (r *UserRepository) ListMonthlyMoneySummary(ctx context.Context, userID int
 	return out, rows.Err()
 }
 
-// 【詳細コメント】ListPaymentMethods は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// ListPaymentMethods は、マイページに表示する支払い方法一覧を取得します。
+// 既定の支払い方法を上に並べ、チャージに使われるカードが分かりやすい順序で返します。
 func (r *UserRepository) ListPaymentMethods(ctx context.Context, userID int64) ([]models.PaymentMethod, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT id, user_id, label, card_last4, holder_name, expiry_month, expiry_year, is_default, created_at FROM payment_methods WHERE user_id = ? ORDER BY is_default DESC, created_at DESC`, userID)
 	if err != nil {
@@ -491,9 +487,7 @@ func (r *UserRepository) ListPaymentMethods(ctx context.Context, userID int64) (
 	defer rows.Close()
 	out := []models.PaymentMethod{}
 	for rows.Next() {
-		// 【詳細コメント】m は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var m models.PaymentMethod
-		// 【詳細コメント】isDefault は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var isDefault int
 		if err := rows.Scan(&m.ID, &m.UserID, &m.Label, &m.CardLast4, &m.HolderName, &m.ExpiryMonth, &m.ExpiryYear, &isDefault, &m.CreatedAt); err != nil {
 			return nil, err
@@ -504,7 +498,8 @@ func (r *UserRepository) ListPaymentMethods(ctx context.Context, userID int64) (
 	return out, rows.Err()
 }
 
-// 【詳細コメント】CreatePaymentMethod は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// CreatePaymentMethod は、チャージに使う支払い方法を登録します。
+// デモ用途ではカード下4桁などをDBに保存しますが、実運用では決済代行サービスのトークン保存に置き換えるべき箇所です。
 func (r *UserRepository) CreatePaymentMethod(ctx context.Context, userID int64, req models.CreatePaymentMethodRequest) (models.PaymentMethod, error) {
 	req.Label = strings.TrimSpace(req.Label)
 	req.HolderName = strings.TrimSpace(req.HolderName)
@@ -519,8 +514,6 @@ func (r *UserRepository) CreatePaymentMethod(ctx context.Context, userID int64, 
 		return models.PaymentMethod{}, err
 	}
 	defer tx.Rollback()
-
-	// 【詳細コメント】existing は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var existing int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_methods WHERE user_id = ?`, userID).Scan(&existing); err != nil {
 		return models.PaymentMethod{}, err
@@ -548,25 +541,24 @@ func (r *UserRepository) CreatePaymentMethod(ctx context.Context, userID int64, 
 	return r.FindPaymentMethod(ctx, userID, id)
 }
 
-// 【詳細コメント】FindPaymentMethod は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// FindPaymentMethod は、登録直後や一覧更新時に支払い方法を1件取得します。
+// userIDを条件に含め、他ユーザーの支払い方法IDを指定されても取得できないようにします。
 func (r *UserRepository) FindPaymentMethod(ctx context.Context, userID, id int64) (models.PaymentMethod, error) {
-	// 【詳細コメント】m は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var m models.PaymentMethod
-	// 【詳細コメント】isDefault は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var isDefault int
 	err := r.DB.QueryRowContext(ctx, `SELECT id, user_id, label, card_last4, holder_name, expiry_month, expiry_year, is_default, created_at FROM payment_methods WHERE id = ? AND user_id = ?`, id, userID).Scan(&m.ID, &m.UserID, &m.Label, &m.CardLast4, &m.HolderName, &m.ExpiryMonth, &m.ExpiryYear, &isDefault, &m.CreatedAt)
 	m.IsDefault = isDefault == 1
 	return m, err
 }
 
-// 【詳細コメント】SetDefaultPaymentMethod は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// SetDefaultPaymentMethod は、チャージで使う既定の支払い方法を1件に切り替えます。
+// 一度すべてのis_defaultを0にしてから対象だけ1にすることで、既定カードが複数になる状態を避けます。
 func (r *UserRepository) SetDefaultPaymentMethod(ctx context.Context, userID, id int64) error {
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	// 【詳細コメント】exists は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var exists int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_methods WHERE id = ? AND user_id = ?`, id, userID).Scan(&exists); err != nil {
 		return err
@@ -586,14 +578,14 @@ func (r *UserRepository) SetDefaultPaymentMethod(ctx context.Context, userID, id
 	return tx.Commit()
 }
 
-// 【詳細コメント】DeletePaymentMethod は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// DeletePaymentMethod は、登録済み支払い方法を削除します。
+// 削除したものが既定だった場合は、残っている最新の支払い方法を自動で既定にし、チャージ不能状態を減らします。
 func (r *UserRepository) DeletePaymentMethod(ctx context.Context, userID, id int64) error {
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	// 【詳細コメント】wasDefault は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var wasDefault int
 	if err := tx.QueryRowContext(ctx, `SELECT is_default FROM payment_methods WHERE id = ? AND user_id = ?`, id, userID).Scan(&wasDefault); err != nil {
 		return err
@@ -602,7 +594,6 @@ func (r *UserRepository) DeletePaymentMethod(ctx context.Context, userID, id int
 		return err
 	}
 	if wasDefault == 1 {
-		// 【詳細コメント】nextID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 		var nextID int64
 		err := tx.QueryRowContext(ctx, `SELECT id FROM payment_methods WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, userID).Scan(&nextID)
 		if err != nil && err != sql.ErrNoRows {
@@ -620,9 +611,9 @@ func (r *UserRepository) DeletePaymentMethod(ctx context.Context, userID, id int
 	return tx.Commit()
 }
 
-// 【詳細コメント】HasDefaultPaymentMethod は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// HasDefaultPaymentMethod は、ユーザーにチャージ可能な既定支払い方法があるかを確認します。
+// Chargeの前提条件として使い、支払い方法未登録のまま残高だけ増えるデモ上の矛盾を防ぎます。
 func (r *UserRepository) HasDefaultPaymentMethod(ctx context.Context, userID int64) (bool, error) {
-	// 【詳細コメント】exists は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var exists int
 	err := r.DB.QueryRowContext(ctx, `SELECT 1 FROM payment_methods WHERE user_id = ? AND is_default = 1 LIMIT 1`, userID).Scan(&exists)
 	if err == sql.ErrNoRows {

@@ -2,12 +2,10 @@
 // ファイル概要: hackathon-backend/internal/config/config.go
 // 役割: 環境変数からDB接続情報、JWT秘密鍵、AI関連設定を読み込みます。
 //
-// 読み方の目安:
-// 1. まずpackage/importを確認し、このファイルがどの層に属するかを把握します。
-// 2. type定義では、DB/API/画面で受け渡すデータの形を確認します。
-// 3. func定義では、入力検証、DB処理、AI呼び出し、レスポンス整形の順に読むと流れを追いやすくなります。
-//
 // ============================================================
+// 実装詳細メモ:
+// 環境変数からポート、DB接続、JWT秘密鍵、AIプロバイダ設定を読み込みます。
+// .envの有無に左右されずCloud Runとローカル開発の両方で同じConfig構造体を使います。
 package config
 
 import (
@@ -18,7 +16,6 @@ import (
 // Config は、アプリ全体で共有する設定値をまとめる構造体です。
 // 環境変数を直接いろいろな場所で読むと、どの設定が必要なのか分かりにくくなるため、
 // 起動時に一度だけ読み取り、この構造体に集約します。
-// 【詳細コメント】Config は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 type Config struct {
 	Port           string
 	FrontendOrigin string
@@ -39,7 +36,6 @@ type Config struct {
 }
 
 // Load は環境変数からConfigを作る関数です。
-// 【詳細コメント】Load は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func Load() (Config, error) {
 	cfg := Config{
 		Port:            getEnv("PORT", "8080"),
@@ -72,7 +68,7 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// 【詳細コメント】getEnv は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// getEnv は環境変数を読み取り、未設定の場合はデフォルト値を返します。
 func getEnv(key string, fallback string) string {
 	value := os.Getenv(key)
 	if value == "" {

@@ -2,12 +2,10 @@
 // ファイル概要: hackathon-backend/cmd/server/main.go
 // 役割: HTTPサーバーの起動、CORS設定、ルーティング登録、AI販売改善通知の定期実行をまとめるエントリーポイントです。
 //
-// 読み方の目安:
-// 1. まずpackage/importを確認し、このファイルがどの層に属するかを把握します。
-// 2. type定義では、DB/API/画面で受け渡すデータの形を確認します。
-// 3. func定義では、入力検証、DB処理、AI呼び出し、レスポンス整形の順に読むと流れを追いやすくなります。
-//
 // ============================================================
+// 実装詳細メモ:
+// 設定読み込み、DB接続、HTTPルーティング、CORS、売れ残り通知ジョブを配線する起動点です。
+// 各URLとHandlerの対応を見ると、フロントエンドのapi/client.tsがどのAPIを呼ぶか追いやすくなります。
 // Package main は、AI Flea Market のGoバックエンドを起動するエントリポイントです。
 //
 // ここでは設定読み込み、DB接続、HTTPルーティング、認証ミドルウェアの接続を行います。
@@ -29,8 +27,11 @@ import (
 	"hackathon-backend/internal/httpx"
 )
 
-// 【詳細コメント】main は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// main は、バックエンドアプリを実際に起動する最上位の関数です。
+// 設定読み込み、DB接続、Repository/Handler生成、URLルーティング、CORS設定、HTTP待受け開始までを順番に配線します。
 func main() {
+	// 設定とDB接続はアプリ全体の土台です。
+	// HandlerやRepositoryへ環境変数を直接読ませず、ここでConfigとDBを注入します。
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
@@ -63,6 +64,8 @@ func main() {
 		}
 	}()
 
+	// Go 1.22のメソッド付きパターンを使い、静的なAPIはここで直接登録します。
+	// 認証が必要なAPIだけ auth.Middleware で包むため、公開APIと本人APIの境界が読み取りやすくなります。
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -97,6 +100,7 @@ func main() {
 	mux.Handle("POST /api/me/ai-chat-threads", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CreateAIChatThread)))
 	mux.Handle("POST /api/items", auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.CreateItem)))
 
+	// 標準ServeMuxだけで /:id/read のような末尾パターンを扱うため、ここではsuffixで分岐します。
 	mux.HandleFunc("/api/me/notifications/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read") {
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ReadNotification)).ServeHTTP(w, r)
@@ -105,6 +109,7 @@ func main() {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 
+	// AIチャットはスレッド配下にmessagesを持つため、RESTの階層をこの分岐でHandlerへ接続します。
 	mux.HandleFunc("/api/me/ai-chat-threads/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.ListAIChatMessages)).ServeHTTP(w, r)
@@ -121,6 +126,7 @@ func main() {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 
+	// 支払い方法は個別IDに対して「削除」と「デフォルト化」の2操作があるため、HTTPメソッドとsuffixで分けます。
 	mux.HandleFunc("/api/me/payment-methods/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/default") {
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.SetDefaultPaymentMethod)).ServeHTTP(w, r)
@@ -133,6 +139,7 @@ func main() {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 
+	// 保存検索とブロック解除は、本人に紐づく小さなリソース削除APIです。
 	mux.HandleFunc("/api/me/saved-searches/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			auth.Middleware(cfg.JWTSecret, http.HandlerFunc(h.DeleteSavedSearch)).ServeHTTP(w, r)
@@ -148,6 +155,8 @@ func main() {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 
+	// 商品詳細配下には、購入、発送、完了、チェックリスト、AI分析、コメント、DMなど多くの操作があります。
+	// どの操作も商品IDをURLに含むため、この一箇所でsuffixを見て対応するHandlerへ振り分けます。
 	mux.HandleFunc("/api/items/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
@@ -197,7 +206,8 @@ func main() {
 	}
 }
 
-// 【詳細コメント】withCORS は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// withCORS はVite開発サーバーと本番フロントエンドからのAPI呼び出しを許可します。
+// localhostは開発中にポートが変わるためprefixで許可し、本番originは環境変数で明示します。
 func withCORS(frontendOrigin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")

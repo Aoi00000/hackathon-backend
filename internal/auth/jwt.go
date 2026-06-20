@@ -2,12 +2,10 @@
 // ファイル概要: hackathon-backend/internal/auth/jwt.go
 // 役割: ログイン後のJWT生成、検証、認証ミドルウェアによるユーザーID注入を担当します。
 //
-// 読み方の目安:
-// 1. まずpackage/importを確認し、このファイルがどの層に属するかを把握します。
-// 2. type定義では、DB/API/画面で受け渡すデータの形を確認します。
-// 3. func定義では、入力検証、DB処理、AI呼び出し、レスポンス整形の順に読むと流れを追いやすくなります。
-//
 // ============================================================
+// 実装詳細メモ:
+// JWTの発行、検証、HTTPミドルウェア、ContextへのユーザーID格納を担当します。
+// Repositoryへ認証情報を渡さず、Handler層でユーザーIDを取り出す境界を明確にしています。
 package auth
 
 import (
@@ -24,15 +22,14 @@ import (
 
 // contextKey は、contextに保存する値のキーです。
 // stringをそのままキーにすると他パッケージと衝突し得るため、専用型を使います。
-// 【詳細コメント】contextKey は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 type contextKey string
 
-// 【詳細コメント】userIDKey は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+// userIDKey は認証ミドルウェアがContextへログインユーザーIDを入れるための専用キーです。
+// 非公開型contextKeyを使うことで、別パッケージが同じ文字列キーを使っても衝突しません。
 const userIDKey contextKey = "userID"
 
 // GenerateToken はユーザーIDからJWTを生成します。
 // フロントエンドはこのトークンを localStorage に保存し、Authorizationヘッダで送ります。
-// 【詳細コメント】GenerateToken は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func GenerateToken(userID int64, secret string) (string, error) {
 	claims := jwt.MapClaims{
 		// sub は「このトークンが誰を表すか」を意味する標準的なclaimです。
@@ -51,7 +48,6 @@ func GenerateToken(userID int64, secret string) (string, error) {
 
 // Middleware は認証が必要なAPIを保護するHTTPミドルウェアです。
 // Authorization: Bearer <token> を検証し、成功した場合だけ次のhandlerを実行します。
-// 【詳細コメント】Middleware は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func Middleware(secret string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, err := UserIDFromRequest(r, secret)
@@ -66,21 +62,19 @@ func Middleware(secret string, next http.Handler) http.Handler {
 }
 
 // UserIDFromContext はミドルウェアがcontextに入れたログインユーザーIDを取り出します。
-// 【詳細コメント】UserIDFromContext は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func UserIDFromContext(ctx context.Context) (int64, bool) {
 	userID, ok := ctx.Value(userIDKey).(int64)
 	return userID, ok
 }
 
 // UserIDFromRequest はHTTPリクエストのAuthorizationヘッダからユーザーIDを取り出します。
-// 【詳細コメント】UserIDFromRequest は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 func UserIDFromRequest(r *http.Request, secret string) (int64, error) {
 	header := r.Header.Get("Authorization")
 	if header == "" {
 		return 0, fmt.Errorf("missing authorization header")
 	}
-
-	// 【詳細コメント】prefix は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
+	// フロントエンドのapi/client.tsは Authorization: Bearer <JWT> の形式で送ります。
+	// Basic認証や空トークンを誤って受け入れないよう、prefixを明示して検査します。
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) {
 		return 0, fmt.Errorf("invalid authorization header")
@@ -108,7 +102,6 @@ func UserIDFromRequest(r *http.Request, secret string) (int64, error) {
 		return 0, err
 	}
 
-	// 【詳細コメント】userID は、この層の責務を小さく保つための宣言です。入力・出力・DB/APIとの対応を意識して読むと、全体の流れを追いやすくなります。
 	var userID int64
 	if _, err := fmt.Sscanf(sub, "%d", &userID); err != nil {
 		return 0, err
